@@ -1,8 +1,9 @@
 """What's actually going on in a sequence: plain-English findings from an export.
 
 While finish writes, every frame leaves a tiny brightness sample (about 160
-pixels across, by sampling, so it costs almost nothing), before and after
-correction. From those and the plan, four checks tell real change from flicker
+points across, each the average of a small patch of pixels, so grain is about
+6x lower than single pixels and it still costs only milliseconds), before and
+after correction. From those and the plan, four checks tell real change from flicker
 from editing side effects:
 
 - sections: how fast the light really changes at the start, middle and end,
@@ -28,6 +29,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 TINY = 160                      # long edge of each frame's brightness sample, in pixels
+PATCH = 6                       # each sample point averages a PATCH x PATCH patch: grain about 6x lower
 LUMA = np.array([0.2126, 0.7152, 0.0722], np.float32)
 BANDS = (("shadows", 10, 40), ("midtones", 40, 75), ("highlights", 75, 97))
 GRID = (6, 8)                   # rows, columns of regions
@@ -46,13 +48,21 @@ class Finding:
 # --- gathering, while the export runs -------------------------------------------------------------
 
 def sample(img: np.ndarray) -> np.ndarray:
-    """A frame's tiny brightness sample (linear light), by taking every n-th pixel: a few milliseconds."""
+    """A frame's tiny brightness sample (linear light): about TINY points across, each the average of a PATCH x
+    PATCH patch of pixels, so grain is much lower than taking single pixels. A few milliseconds."""
     from .finish import _levels
     from .measure import _srgb_to_linear
-    step = max(1, max(img.shape[:2]) // TINY)
-    small = img[::step, ::step, :3]
+    h, w = img.shape[:2]
+    step = max(1, max(h, w) // TINY)
+    size = min(PATCH, step)
+    nh, nw = (h - size) // step + 1, (w - size) // step + 1
     lut = _srgb_to_linear(np.arange(_levels(img) + 1, dtype=np.float64) / _levels(img)).astype(np.float32)
-    return np.take(lut, small) @ LUMA
+    total = np.zeros((nh, nw), np.float32)
+    for dy in range(size):
+        for dx in range(size):
+            patch = img[dy:dy + (nh - 1) * step + 1:step, dx:dx + (nw - 1) * step + 1:step, :3]
+            total += np.take(lut, patch) @ LUMA
+    return total / (size * size)
 
 
 class Recorder:
@@ -85,14 +95,22 @@ def _logs(stack: list[np.ndarray]) -> np.ndarray:
     return np.log2(np.maximum(np.stack([s.ravel() for s in stack]), 1e-6))         # frames x pixels
 
 
-def _still(before: np.ndarray, usable: np.ndarray) -> np.ndarray:
-    """Pixels that don't change chaotically: set aside swaying leaves, walkers and lights switching, whose own
-    frame-to-frame wobble is far beyond the typical pixel's. (Judged on each pixel's own wobble, not on how it
-    differs from the frame: areas that don't share the frame's flicker, like lamp-lit ones, are exactly what
-    the region and tone checks need to see.)"""
+def _still(before: np.ndarray, usable: np.ndarray, bins: int = 12) -> np.ndarray:
+    """Pixels that don't change chaotically: set aside swaying leaves, walkers and lights switching.
+
+    Each pixel is judged on its own frame-to-frame wobble, against what grain alone gives a pixel of the same
+    brightness (learnt from the footage: dark pixels are grainier). So noisy shadows stay in, and only pixels
+    wobbling well beyond their grain are set aside. (Not judged on how a pixel differs from the frame: areas
+    that don't share the frame's flicker, like lamp-lit ones, are exactly what the checks need to see.)"""
     wobble = np.std(np.diff(before, 2, axis=0), axis=0)
-    typical = float(np.median(wobble[usable]))
-    return usable & (wobble <= 2.5 * typical + 1e-4)
+    level = np.median(before, axis=0)                       # each pixel's typical brightness, log2
+    edges = np.percentile(level[usable], np.linspace(0, 100, bins + 1))
+    which = np.clip(np.searchsorted(edges, level, side="right") - 1, 0, bins - 1)
+    expected = np.zeros(bins)
+    for i in range(bins):
+        in_bin = usable & (which == i)
+        expected[i] = np.median(wobble[in_bin]) if in_bin.any() else np.median(wobble[usable])
+    return usable & (wobble <= 2.5 * expected[which] + 1e-4)
 
 
 def _flicker(before: np.ndarray, still: np.ndarray) -> float:
