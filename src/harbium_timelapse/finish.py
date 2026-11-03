@@ -368,7 +368,7 @@ def apply_finish(plan: FinishPlan, out: Path | str | None = None, video: Path | 
                  codec: str = "h264", dither: bool = True, meter: "Meter | None" = None,
                  finalising: Callable[[], None] | None = None, timings: dict | None = None,
                  options: "VideoOptions | None" = None, jpeg_quality: int = JPEG_QUALITY,
-                 strip: dict | None = None) -> list[Path]:
+                 strip: dict | None = None, diagnose=None) -> list[Path]:
     """Correct every frame. ``out``: a folder for corrected frames (same names;
     same format unless ``fmt`` is "jpg", "png" or "tif"). ``video``: an MP4
     encoded straight from the corrected frames, so nothing in between needs
@@ -498,6 +498,8 @@ def apply_finish(plan: FinishPlan, out: Path | str | None = None, video: Path | 
                 encoder.write(frame)
                 spent["correct"] += t1 - t0
                 spent["encode"] += clock() - t1
+            if diagnose is not None:                    # tiny brightness samples for the checks: a few ms
+                diagnose.add(img, fixed if fixed is not None else frame, i, len(plan.frames))
             if strip is not None:
                 corrected = fixed if fixed is not None else frame
                 x = strip.get("x", 0.5)                 # the diagnostic strip: one narrow slice of every frame

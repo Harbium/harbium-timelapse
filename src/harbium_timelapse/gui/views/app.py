@@ -39,6 +39,20 @@ def open_path(path: Path, select: bool = False) -> None:
         subprocess.Popen(["xdg-open", str(path.parent if select else path)])
 
 
+def _marked(picture, boxes, tokens) -> bytes:
+    """The middle frame with the found areas outlined."""
+    import io
+    from PIL import Image, ImageDraw
+    im = Image.fromarray(picture).convert("RGB")
+    d = ImageDraw.Draw(im)
+    w, h = im.size
+    for top, left, bottom, right in boxes:
+        d.rectangle([left * w, top * h, right * w - 1, bottom * h - 1], outline=(255, 255, 255), width=2)
+    buf = io.BytesIO()
+    im.save(buf, format="JPEG", quality=88)
+    return buf.getvalue()
+
+
 def _image_bytes(path) -> bytes:
     """A small image's data, so it shows the same in the desktop app and in a browser (which can't read local paths)."""
     try:
@@ -645,10 +659,37 @@ class DoneScreen(Screen):
                              ft.Row([ui.secondary("Show in folder", lambda e: open_path(video, select=True)),
                                      ui.primary("Play video", lambda e: open_path(video))], spacing=10)],
                             alignment=ft.MainAxisAlignment.SPACE_BETWEEN, wrap=True)) if video else ft.Container(),
+            *self._checks(),
             *self._strip(),
-            ui.text("Worth a look", size=14), self.flags,
+            ui.text("Frames worth a look", size=14), self.flags,
             ft.Row([ui.secondary("Open another folder", lambda e: m.go("start"))]),
         ], spacing=14, width=900)
+
+    def _checks(self) -> list:
+        """What the checks found: what each means, and what to do about it."""
+        ui, m = self.ui, self.m
+        findings = m.finished.diagnosis
+        if not findings:
+            return []
+        marks = {"ok": "✓", "note": "i", "look": "!"}
+        rows = []
+        for f in findings:
+            badge = ft.Container(ft.Text(marks.get(f.kind, "i"), size=12, color=ui.t["bg"]), width=20, height=20,
+                                 border_radius=10, bgcolor=ui.t["text"] if f.kind != "ok" else ui.t["dim"],
+                                 alignment=ft.Alignment.CENTER)
+            body = [ui.text(f.title, size=14)]
+            if f.detail:
+                body.append(ui.text(f.detail, dim=True, size=13))
+            if f.fix and f.kind != "ok":
+                body.append(ui.text("What to do: " + f.fix, size=13))
+            if f.boxes and m.finished.thumbnail is not None:
+                body.append(ft.Image(src=_marked(m.finished.thumbnail, f.boxes, ui.t), width=420,
+                                     fit=ft.BoxFit.CONTAIN, border_radius=2))
+            rows.append(ft.Container(ft.Row([badge, ft.Column(body, spacing=4, expand=True)],
+                                            vertical_alignment=ft.CrossAxisAlignment.START),
+                                     padding=ft.Padding(0, 10, 0, 10),
+                                     border=ft.Border(bottom=ft.BorderSide(1, ui.t["line"]))))
+        return [ui.text("What the checks found", size=14), ft.Column(rows, spacing=0)]
 
     def _strip(self) -> list:
         """The time strip: a quick-to-load view to zoom and pan, and the full-detail file a click away."""
@@ -659,9 +700,9 @@ class DoneScreen(Screen):
         self.strip_view = ft.Image(src=b"", width=880, fit=ft.BoxFit.CONTAIN)
         self.view.page.run_task(self._load_strip)
         return [ui.text("Time slice", size=14),
-                ui.text("Your scene with time running left to right: each frame gives one band of the picture. A frame "
-                        "that jumped shows as a band lighter or darker than its neighbours; After should fade smoothly. "
-                        "Scroll to zoom, drag to look around.", dim=True, size=13),
+                ui.text("Your scene with time running through it: each frame gives one part of the picture (a band, "
+                        "ring or wedge). A frame that jumped shows lighter or darker than its neighbours; After should "
+                        "change evenly. Scroll to zoom, drag to look around.", dim=True, size=13),
                 ft.Container(ft.InteractiveViewer(content=self.strip_view, min_scale=1, max_scale=12,
                                                   boundary_margin=ft.Margin.all(40)),
                              bgcolor=ui.t["surround"], padding=8, border_radius=2, width=896, height=420,

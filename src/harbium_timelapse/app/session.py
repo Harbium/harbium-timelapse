@@ -182,6 +182,8 @@ class Finished:
     timings: dict = field(default_factory=dict)
     strip: Path | None = None              # the time strip, full detail, beside the report
     strip_columns: dict = field(default_factory=dict)
+    diagnosis: list = field(default_factory=list)          # plain-English findings (diagnose.Finding)
+    thumbnail: object = None                                # the middle frame, for marking regions
 
     @property
     def where_the_time_went(self) -> str:
@@ -252,17 +254,23 @@ def write_export(planned: Planned, out: Path | None = None, video: Path | None =
     after = Meter()
     timings: dict = {}
     columns: dict = {"x": strip_x, "mode": slice_mode}
+    from ..diagnose import Recorder, diagnose
+    recorder = Recorder()
     began = time.perf_counter()
     written = apply_finish(planned.plan, out=out, video=video, fps=fps, width=width, options=options,
-                           jpeg_quality=jpeg_quality, strip=columns,
+                           jpeg_quality=jpeg_quality, strip=columns, diagnose=recorder,
                            progress=tracker.stage("Writing") if tracker else None, fmt=fmt, codec=codec,
                            dither=dither, meter=after,
                            finalising=(lambda: tracker.stage("Finishing the video file")(0, 0)) if tracker else None,
                            timings=timings)
     timings["elapsed"] = time.perf_counter() - began
+    try:
+        findings = diagnose(recorder, planned.plan.measured @ LUMA, planned.plan.target @ LUMA, after.series() @ LUMA)
+    except (ValueError, FloatingPointError, IndexError):
+        findings = []
     timings["frames"] = len(planned.frames)
     check = after.series()
-    findings = review_frames(check, [f.name for f in planned.frames])
+    review_findings = review_frames(check, [f.name for f in planned.frames])
     where = Path(out) if out else Path(video).with_name(Path(video).stem + ".timelapse-report.json")
     # The time slice, full size, beside the frames folder or the video: never inside a frames folder, where
     # image-sequence importers (and finish itself) would take it for a frame.
@@ -283,11 +291,14 @@ def write_export(planned: Planned, out: Path | None = None, video: Path | None =
                 "seconds": {k: round(v, 2) for k, v in timings.items() if k not in ("bytes", "frames")},
                 "seconds_per_frame": round(timings["elapsed"] / max(1, timings["frames"]), 3),
                 "bytes_read": timings.get("bytes", 0),
-                "strip": strip_path.name if strip_path else None, "strip_x": strip_x}
+                "strip": strip_path.name if strip_path else None, "strip_x": strip_x,
+                "checks": [{"kind": f.kind, "title": f.title, "detail": f.detail, "fix": f.fix,
+                            "frames": [i + 1 for i in f.frames], "boxes": f.boxes} for f in findings]}
     try:
         saved = run_report.write(run_report.finish_report(planned.plan, written if out else None, settings, check,
-                                                          findings, planned.motion,
+                                                          review_findings, planned.motion,
                                                           where=Path(out) if out else Path(video).parent), where)
     except OSError:
         saved = None
-    return Finished(written, check, findings, saved, Path(video) if video else None, timings, strip_path, columns)
+    return Finished(written, check, review_findings, saved, Path(video) if video else None, timings, strip_path,
+                    columns, findings, recorder.thumbnail)

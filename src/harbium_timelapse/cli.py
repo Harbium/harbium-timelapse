@@ -279,6 +279,7 @@ def _finish(args) -> int:
     print(f"  Measured on the corrected frames: brightness {done.brightness_after:.3f} stops, "
           f"colour {done.colour_after:.3f}")
     _print_findings(done.findings, len(frames))
+    _print_checks(done.diagnosis)
     if args.out:
         print(f"  Corrected frames: {args.out}")
     if args.video:
@@ -289,6 +290,19 @@ def _finish(args) -> int:
         print(f"  Time strip: {done.strip}")
     print(f"  Report: {done.report}" if done.report else "  (Couldn't save the run report.)")
     return 0
+
+
+def _print_checks(findings) -> None:
+    if not findings:
+        return
+    print("  What the checks found:")
+    marks = {"ok": "ok  ", "note": "note", "look": "look"}
+    for f in findings:
+        print(f"   [{marks.get(f.kind, f.kind)}] {f.title}")
+        if f.detail:
+            print(f"          {f.detail}")
+        if f.fix and f.kind != "ok":
+            print(f"          What to do: {f.fix}")
 
 
 def _show_progress(p) -> None:
@@ -313,18 +327,14 @@ def _print_findings(findings, n: int) -> None:
 
 
 def _tone_check(args) -> int:
-    from .tonecheck import check_folders, lagging, verdict
+    from .tonecheck import check_folders
     try:
-        bands, n = check_folders(args.before, args.after, _show_progress_plain("Reading"))
+        findings, n = check_folders(args.before, args.after, _show_progress_plain("Reading"))
     except (ValueError, OSError) as e:
         print(f"\n{e}", file=sys.stderr)
         return 1
-    print(f"{n} frames compared. Frame-to-frame jitter (stops), trend removed:")
-    print(f"  {'band':11s} {'pixels':>7s} {'before':>8s} {'after':>8s}")
-    for b in bands:
-        flag = "   worse" if b.worse else ("   barely steadier" if b in lagging(bands) else "")
-        print(f"  {b.name:11s} {b.share * 100:6.0f}% {b.before:8.4f} {b.after:8.4f}   kept {b.kept * 100:3.0f}%{flag}")
-    print(verdict(bands))
+    print(f"{n} frames compared.")
+    _print_checks(findings)
     return 0
 
 
