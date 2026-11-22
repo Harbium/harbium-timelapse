@@ -122,3 +122,16 @@ def test_the_visual_trim_uses_cached_thumbnails(tmp_path):
     m.set_trim(1, 30)
     assert (m.out.first, m.out.last) == (None, None)                       # the whole sequence again
     assert m.frame_time(25) == "0:01.0"
+
+
+def test_up_to_4k_fits_a_4k_frame_not_just_its_width():
+    """Regression: 3:2 frames came out 3840 x 2560 at '4K', H.264 level 6, which Windows Media Player decoded
+    with blocky patches. They now fit inside 3840 x 2160."""
+    from harbium_timelapse.gui.models.export import ExportSettings, notes, output_size
+    s = ExportSettings(resolution="4K")
+    assert output_size(s, 5472, 3648) == (3240, 2160)
+    assert output_size(s, 6000, 3376) == (3838, 2160) or output_size(s, 6000, 3376)[1] <= 2160
+    assert output_size(ExportSettings(resolution="4K"), 1920, 1280) == (1920, 1280)        # never enlarged
+    big = ExportSettings(resolution="custom", custom_width=3840)
+    assert any("level 5.1" in n for n in notes(big, 3840, 2560))
+    assert not any("level 5.1" in n for n in notes(s, 3240, 2160))

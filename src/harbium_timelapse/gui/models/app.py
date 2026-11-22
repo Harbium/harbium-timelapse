@@ -33,7 +33,7 @@ STAGE_BAR = (("folder", "Folder"), ("prepare", "Prepare"), ("grade", "Grade"), (
              ("done", "Review"))
 
 PRESETS = {k: {"label": v["label"], "detail": v["detail"], "codec": v["settings"].get("codec", "h264"),
-               "width": RESOLUTIONS.get(v["settings"].get("resolution", "native")),
+               "width": (RESOLUTIONS.get(v["settings"].get("resolution", "native")) or (None,))[0],
                "suffix": ".mov" if v["settings"].get("codec") == "prores" else ".mp4"}
            for k, v in BUILT_IN.items()}
 
@@ -712,20 +712,23 @@ class AppModel:
                                  f"{describe(free)} free.")
         if s.video:
             bits.insert(0, f"{count} frames at {out_w} × {out_h}")
-        return {"problems": problems_, "notes": notes(s, out_w if s.video else None), "estimate": ". ".join(bits) + "."}
+        return {"problems": problems_, "notes": notes(s, out_w if s.video else None, out_h if s.video else None),
+                "estimate": ". ".join(bits) + "."}
 
     @staticmethod
-    def _preset_width(export: Path, limit: int | None) -> int | None:
-        """A width is a ceiling, never a target: frames are never enlarged."""
+    def _preset_width(export: Path, limit) -> int | None:
+        """The video width that fits the frames in the chosen box (or under a plain width): never enlarged."""
         if limit is None:
             return None
+        box = limit if isinstance(limit, tuple) else (limit, None)
         from PIL import Image
         from ...finish import finished_frames
+        from .export import fit_width
         try:
             with Image.open(finished_frames(export)[0]) as im:
-                return min(limit, im.size[0])
+                return fit_width(im.size[0], im.size[1], box)
         except (OSError, ValueError, IndexError):
-            return limit
+            return box[0]
 
     @property
     def can_finish(self) -> bool:

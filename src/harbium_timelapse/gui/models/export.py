@@ -19,7 +19,23 @@ from pathlib import Path
 from ...app import config
 from ...finish import VideoOptions
 
-RESOLUTIONS = {"native": None, "8K": 7680, "6K": 6144, "4K": 3840, "1440p": 2560, "1080p": 1920}
+# Each size is a box the frame must fit inside, never a width alone: 3:2 frames made "3840 wide" came out
+# 3840 x 2560, beyond H.264/H.265 level 5.1/5.2, which many players' hardware decoders can't play (blocky
+# patches that linger until the next keyframe).
+RESOLUTIONS = {"native": None, "8K": (7680, 4320), "6K": (6144, 3456), "4K": (3840, 2160), "1440p": (2560, 1440),
+               "1080p": (1920, 1080)}
+H264_MAX_MACROBLOCKS = 36864          # level 5.1/5.2: what most hardware decoders handle
+H265_MAX_SAMPLES = 8_912_896          # level 5.1/5.2
+
+
+def fit_width(source_width: int, source_height: int, box) -> int:
+    """The width that fits the frame inside ``box`` (width, height; a height of None means any), never larger
+    than the frame itself, rounded down to an even number."""
+    if not box:
+        return source_width // 2 * 2
+    bw, bh = box
+    scale = min(bw / source_width, (bh / source_height) if bh else 1.0, 1.0)
+    return max(2, int(source_width * scale + 1e-6) // 2 * 2)        # 1e-6: exact fits stay exact
 FRAME_RATES = (23.976, 24.0, 25.0, 29.97, 30.0, 50.0, 60.0)
 
 # Approximate bytes per pixel per frame at each format's default quality. H.264: James's Share export
@@ -67,9 +83,10 @@ class ExportSettings:
     def suffix(self) -> str:
         return ".mov" if self.codec == "prores" else ".mp4"
 
-    def width_limit(self) -> int | None:
+    def width_limit(self):
+        """The box the frame must fit in: (width, height), or (width, None) for a custom width; None for native."""
         if self.resolution == "custom":
-            return self.custom_width
+            return (self.custom_width, None) if self.custom_width else None
         return RESOLUTIONS.get(self.resolution)
 
     def to_dict(self) -> dict:
@@ -217,9 +234,15 @@ def problems(s: ExportSettings, frame_count: int, export_folder: Path | None) ->
     return out
 
 
-def notes(s: ExportSettings, out_width: int | None) -> list[str]:
+def notes(s: ExportSettings, out_width: int | None, out_height: int | None = None) -> list[str]:
     """Things worth knowing about this choice that don't stop it."""
     out = s.options().notes(out_width) if s.video else []
+    if s.video and out_width and out_height and s.codec in ("h264", "h265"):
+        too_big = ((out_width // 16) * (out_height // 16) > H264_MAX_MACROBLOCKS if s.codec == "h264"
+                   else out_width * out_height > H265_MAX_SAMPLES)
+        if too_big:
+            out.append(f"{out_width} x {out_height} is beyond what most players' hardware can decode (level 5.1): "
+                       "it may show blocky patches. Up to 4K keeps it within.")
     if s.frames and s.frames_format == "tif":
         out.append("16-bit TIFF frames are large: several times the size of JPEGs.")
     return out
@@ -228,9 +251,8 @@ def notes(s: ExportSettings, out_width: int | None) -> list[str]:
 # --- estimates -----------------------------------------------------------------------------------------
 
 def output_size(s: ExportSettings, source_width: int, source_height: int) -> tuple[int, int]:
-    limit = s.width_limit()
-    w = min(limit, source_width) if limit else source_width
-    return w // 2 * 2, round(source_height * w / source_width / 2) * 2
+    w = fit_width(source_width, source_height, s.width_limit())
+    return w, round(source_height * w / source_width / 2) * 2
 
 
 def estimate_bytes(s: ExportSettings, source_width: int, source_height: int, frames: int,

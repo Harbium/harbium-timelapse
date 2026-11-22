@@ -165,6 +165,7 @@ def check_tones(rec: Recorder, reference: np.ndarray | None = None) -> Finding:
         (unsure if se > 0.25 else rows).append((name, k, se))
     words = ", ".join(f"{n} {k * 100:.0f}%" for n, k, _ in rows)
     low = [(n, k, se) for n, k, se in rows if k + 2 * se < 0.7]
+    high = [(n, k, se) for n, k, se in rows if k - 2 * se > 1.4]
     caveat = (f" Too much else moves in the {' and '.join(n for n, _, _ in unsure)} to tell." if unsure else "")
     if low:
         names = " and ".join(n for n, _, _ in low)
@@ -176,6 +177,17 @@ def check_tones(rec: Recorder, reference: np.ndarray | None = None) -> Finding:
                        fix=f"In your editor, ease off whatever compresses the {names} (a strong curve shoulder, or a "
                            "big Highlights or Shadows move), export again and finish again. A tone-aware correction "
                            "in harbium-timelapse would also fix it; it isn't built yet.")
+    if high:
+        names = " and ".join(n for n, _, _ in high)
+        worst = max((k - 1) * flicker for _, k, _ in high)
+        return Finding("look", f"Tones: the {names} carry more of the flicker, so they're under-corrected",
+                       f"Share of the frame's measured flicker ({flicker:.3f} stops) at each level: {words}. One "
+                       f"correction for every level leaves up to about {worst:.3f} stops of flicker in the {names}, "
+                       "most likely because the grade steepens them (strong contrast or an S-curve amplifies "
+                       "flicker at the levels it stretches)." + caveat,
+                       fix=f"In your editor, ease the contrast or the curve's steepness over the {names}, export and "
+                           "finish again. A tone-aware correction in harbium-timelapse would fix it without "
+                           "changing your grade; it isn't built yet.")
     if not rows:
         return Finding("ok", "Tones: too much movement to judge the levels",
                        "Every brightness level has too much else moving in it (leaves, people, lights) to measure "

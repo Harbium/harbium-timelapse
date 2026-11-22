@@ -64,3 +64,15 @@ def test_steep_real_change_is_explained_not_blamed():
     target = -0.005 * t - 0.0006 * np.maximum(t - 60, 0) ** 2
     f = check_sections(target, target, target)
     assert f.kind == "note" and "end" in f.title and f.fix.startswith("Nothing to fix")
+
+
+def test_levels_carrying_more_of_the_flicker_are_flagged_as_under_corrected():
+    """Regression: highlights carried 206% of the frame's flicker (a contrasty grade) and were called fine."""
+    steep = lambda x: np.clip(x ** 2.2 * 4, 0, 1)                 # noqa: E731 - a grade that stretches brighter levels
+    rec = Recorder()
+    for f in flicker:
+        before = steep(scene * 2 ** f).astype(np.float32)
+        rec.before.append(before)
+        rec.after.append(before)
+    finding = check_tones(rec, flicker)
+    assert finding.kind == "look" and "more of the flicker" in finding.title and "contrast" in finding.fix
