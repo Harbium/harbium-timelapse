@@ -237,8 +237,10 @@ def plan_export(folder: Path, window: int = 25, colour: bool = True, tracker: Tr
     cached = measure_cache.load(frames, "export-channels")
     if cached is not None:
         measured, motion = cached["measured"], float(cached["motion"][0])
-        levels, shares = cached.get("tone_levels"), cached.get("tone_shares")
-        tone = ToneShares(tuple(map(float, levels)), tuple(map(float, shares))) if levels is not None and len(levels) else None
+        levels, shares, bands = cached.get("tone_levels"), cached.get("tone_shares"), cached.get("tone_bands")
+        tone = (ToneShares(tuple(map(float, levels)), tuple(map(float, shares)),
+                           tuple(map(int, bands)) if bands is not None else ())
+                if levels is not None and len(levels) else None)
     else:
         meter = Meter(motion=True)
         measured = measure_channels(frames, tracker.stage("Measuring") if tracker else None, meter=meter)
@@ -246,7 +248,8 @@ def plan_export(folder: Path, window: int = 25, colour: bool = True, tracker: Tr
         tone = meter.tone(measured)
         measure_cache.save(frames, "export-channels", {
             "measured": measured, "motion": np.full(len(frames), motion),
-            "tone_levels": np.array(tone.levels if tone else []), "tone_shares": np.array(tone.shares if tone else [])})
+            "tone_levels": np.array(tone.levels if tone else []), "tone_shares": np.array(tone.shares if tone else []),
+            "tone_bands": np.array(tone.bands if tone else [], dtype=np.int64)})
     return Planned(frames, plan_finish(frames, window=window, colour=colour, measured=measured, tone=tone), motion)
 
 

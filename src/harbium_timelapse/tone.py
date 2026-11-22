@@ -17,6 +17,7 @@ from dataclasses import dataclass
 import numpy as np
 
 EDGES = (5, 25, 45, 65, 85, 98)       # percentiles of the still pixels' levels: five bands, shadows to highlights
+NAMES = ("the deepest shadows", "the shadows", "the midtones", "the bright midtones", "the brightest highlights")
 MIN_EFFECT = 0.15                     # a share must differ from 1 by more than this to be worth acting on
 MOST, LEAST = 3.0, 0.25               # never more than three times, or less than a quarter of, the frame's correction
 SAMPLE_EDGE = 128                     # the tiny brightness copy kept per frame
@@ -27,6 +28,7 @@ class ToneShares:
     """Each band's share of the frame's correction, at the band's typical level (log2 of linear light)."""
     levels: tuple[float, ...]
     shares: tuple[float, ...]
+    bands: tuple[int, ...] = ()       # which of the five bands each level is (they can be skipped), for naming
 
     def at(self, linear: np.ndarray) -> np.ndarray:
         """The share for each linear level: blended smoothly between bands, and past the end bands continuing
@@ -40,11 +42,14 @@ class ToneShares:
         return np.clip(out, LEAST, MOST)
 
     def describe(self) -> str:
-        dark, bright = self.shares[0], self.shares[-1]
-        more, less = ("bright", "dark") if bright >= dark else ("dark", "bright")
-        ratio = max(dark, bright) / max(min(dark, bright), 1e-6)
-        return (f"Tone-aware: {more} levels got {ratio:.1f}x the correction of {less} ones, because the grade "
-                f"stretched their flicker more (strong contrast, a curve or highlight and shadow sliders do this).")
+        """Which level got the most correction and which the least: a grade isn't always a simple ramp (on
+        James's sunset the bright midtones of the sky glow needed most, the brightest highlights held down)."""
+        bands = self.bands if len(self.bands) == len(self.shares) else tuple(range(len(self.shares)))
+        most, least = int(np.argmax(self.shares)), int(np.argmin(self.shares))
+        name = lambda i: NAMES[bands[i]] if bands[i] < len(NAMES) else f"level {i + 1}"    # noqa: E731
+        ratio = self.shares[most] / max(self.shares[least], 1e-6)
+        return (f"Tone-aware: {name(most)} got {ratio:.1f}x the correction of {name(least)}, because the grade "
+                "stretched their flicker more (strong contrast, a curve, or highlight and shadow sliders do this).")
 
 
 def tiny(small_linear_rgb: np.ndarray) -> np.ndarray:
@@ -71,8 +76,8 @@ def tone_shares(tinies: list[np.ndarray], reference: np.ndarray) -> ToneShares |
     if still.sum() < 50:
         return None
     edges = np.percentile(ref[still], EDGES)
-    levels, shares, clear = [], [], False
-    for lo, hi in zip(edges[:-1], edges[1:]):
+    levels, shares, bands, clear = [], [], [], False
+    for band, (lo, hi) in enumerate(zip(edges[:-1], edges[1:])):
         mask = still & (ref >= lo) & (ref < hi)
         if mask.sum() < 10:
             continue
@@ -83,6 +88,7 @@ def tone_shares(tinies: list[np.ndarray], reference: np.ndarray) -> ToneShares |
         clear |= abs(shrunk - 1) > MIN_EFFECT and abs(k - 1) > 2 * se
         levels.append(float(np.median(ref[mask])))
         shares.append(float(np.clip(shrunk, LEAST, MOST)))
+        bands.append(band)
     if not clear or len(levels) < 2:
         return None
-    return ToneShares(tuple(levels), tuple(shares))
+    return ToneShares(tuple(levels), tuple(shares), tuple(bands))

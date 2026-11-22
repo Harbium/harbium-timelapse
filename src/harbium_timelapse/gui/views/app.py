@@ -291,9 +291,11 @@ class StartScreen(Screen):
     def build(self):
         ui = self.ui
         recent = [ft.Container(
-            ft.Row([ui.text(f"{Path(r['folder']).parent.name} / {Path(r['folder']).name}"),
-                    ui.text(f"{r['frames']} frames", dim=True),
-                    ui.text(r["stage"].capitalize(), dim=True)], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+            ft.Row([ft.Container(ui.text(f"{Path(r['folder']).parent.name} / {Path(r['folder']).name}"), expand=True),
+                    ft.Container(ui.text(f"{r['frames']} frames", dim=True), width=120,          # fixed columns,
+                                 alignment=ft.Alignment.CENTER_RIGHT),                         # so they line up
+                    ft.Container(ui.text(r["stage"].capitalize(), dim=True), width=110,
+                                 alignment=ft.Alignment.CENTER_RIGHT)]),
             padding=ft.Padding(4, 12, 4, 12), border=ft.Border(bottom=ft.BorderSide(1, ui.t["line"])),
             on_click=lambda e, f=r["folder"]: self.m.open_folder(f), ink=True) for r in self.m.recent]
         return ft.Column([
