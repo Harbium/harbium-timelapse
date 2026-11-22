@@ -151,6 +151,12 @@ def _main(argv: list[str] | None = None) -> int:
         return 1
     print(f"{len(seq)} frames in {seq.folder}")
     problems = check(seq)
+    if args.command == "suggest-keyframes" and args.label:
+        # Labelling creates the keyframes' edit files itself: say so instead of asking for them.
+        import dataclasses
+        problems = [dataclasses.replace(p, serious=False, message=p.message.split(", so there's nowhere")[0]
+                                        + ". Labelling will create an edit file for each keyframe.")
+                    if p.kind == "no_sidecar" else p for p in problems]
     for p in problems:
         print(f"  {p}")
     if args.command == "check":
@@ -226,7 +232,8 @@ def _measuring(i, n):
 
 
 def _suggest(seq, args, problems) -> int:
-    if any(p.serious for p in problems) and args.label:
+    # Frames with no edit file yet don't stop labelling: labelling creates a minimal one for each keyframe.
+    if any(p.serious and p.kind != "no_sidecar" for p in problems) and args.label:
         print("Not labelling anything until the problems above are sorted.")
         return 1
     try:

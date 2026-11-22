@@ -265,3 +265,17 @@ def test_labelling_a_frame_with_no_edit_file_creates_a_minimal_one(tmp_path):
     data = json.loads((tmp_path / "181A880.CR3.rrdata").read_text(encoding="utf-8"))
     assert data == {"version": 1, "rating": 0, "adjustments": {}, "tags": [KEYFRAME_LABEL]}
     assert keyframes_in(seq) == [0, 3] and not (tmp_path / "181A881.CR3.rrdata").exists()   # only keyframes
+
+
+def test_suggest_and_label_works_on_a_folder_with_no_edit_files(tmp_path, monkeypatch, capsys):
+    """Regression: the command refused to label because no frame had an edit file yet."""
+    import harbium_timelapse.editors.rapidraw.cli as rcli
+    from harbium_timelapse.keyframes import KeyframeSuggestion
+    for i in range(5):
+        (tmp_path / f"181A{880 + i}.CR3").write_bytes(b"")
+    monkeypatch.setattr(rcli, "suggest", lambda seq, **kw: [KeyframeSuggestion(0, "start"), KeyframeSuggestion(4, "end")])
+    monkeypatch.setattr(rcli, "rapidraw_running", lambda: False)
+    assert rcli.main(["suggest-keyframes", str(tmp_path), "--label"]) == 0
+    out = capsys.readouterr().out
+    assert "Labelling will create an edit file" in out and "Labelled purple" in out
+    assert (tmp_path / "181A880.CR3.rrdata").exists() and (tmp_path / "181A884.CR3.rrdata").exists()
