@@ -48,6 +48,7 @@ from .measure import (
 from .parallel import ordered_map
 from .render import RENDERABLE, ffmpeg, ffmpeg_available
 from .sequencer import _natural_key
+from .tone import ToneShares
 
 Progress = Callable[[int, int], None]
 LUMA = np.array([0.2126, 0.7152, 0.0722])
@@ -76,6 +77,7 @@ class FinishPlan:
     frames: tuple[Path, ...]
     measured: np.ndarray   # frames × (red, green, blue); NaN where a frame couldn't be measured
     target: np.ndarray     # the smoothed journey, same shape
+    tone: "ToneShares | None" = None   # each level's share of the correction; None: one gain for every level
 
     def trimmed(self, first: int | None = None, last: int | None = None) -> "FinishPlan":
         """Frames ``first`` to ``last`` (1-based, inclusive) of this plan. The smoothing was done on the whole
@@ -84,7 +86,7 @@ class FinishPlan:
         a, b = (first or 1) - 1, last or n
         if not 0 <= a < b <= n:
             raise ValueError(f"The range must be within frames 1 to {n}, with the first before the last.")
-        return FinishPlan(tuple(self.frames[a:b]), self.measured[a:b], self.target[a:b])
+        return FinishPlan(tuple(self.frames[a:b]), self.measured[a:b], self.target[a:b], self.tone)
 
     @property
     def unmeasured(self) -> tuple[int, ...]:
@@ -133,8 +135,11 @@ class Meter:
         self.shifts: list[tuple[float, float]] | None = [] if motion else None
         self.width = 0
         self._previous = None
+        self.tinies: list[np.ndarray] = []         # tiny brightness copies, for the tone-aware correction
 
     def add(self, small: np.ndarray) -> None:
+        from .tone import tiny
+        self.tinies.append(tiny(small))
         blown = small.max(axis=-1) >= CLIPPED
         for c in range(3):
             self.profiles[c].append(tone_profile(small[..., c]))
@@ -154,6 +159,12 @@ class Meter:
         from .review import camera_motion
         return camera_motion(self.shifts or [], self.width)
 
+    def tone(self, measured: np.ndarray) -> "ToneShares | None":
+        """Each brightness level's share of the flicker (None when they all carry it about equally)."""
+        from .tone import tone_shares
+        luma = np.asarray(measured, dtype=np.float64) @ LUMA
+        return tone_shares(self.tinies, luma) if np.isfinite(luma).sum() >= 12 else None
+
 
 def measure_channels(frames: list[Path], progress: Progress | None = None, steady: bool = True,
                      meter: Meter | None = None) -> np.ndarray:
@@ -172,7 +183,8 @@ def measure_channels(frames: list[Path], progress: Progress | None = None, stead
 
 
 def plan_finish(frames: list[Path], window: int = DEFAULT_WINDOW, colour: bool = True,
-                measured: np.ndarray | None = None, progress: Progress | None = None) -> FinishPlan:
+                measured: np.ndarray | None = None, progress: Progress | None = None,
+                tone: "ToneShares | None" = None) -> FinishPlan:
     """Work out each frame's correction. Writes nothing.
 
     ``colour=False`` corrects brightness only: the same gain on all three
@@ -189,7 +201,7 @@ def plan_finish(frames: list[Path], window: int = DEFAULT_WINDOW, colour: bool =
     else:
         luma = measured @ LUMA
         target = measured + (smooth_brightness(luma, window) - luma)[:, None]
-    return FinishPlan(tuple(frames), measured, target)
+    return FinishPlan(tuple(frames), measured, target, tone)
 
 
 CODECS = {
@@ -479,7 +491,7 @@ def apply_finish(plan: FinishPlan, out: Path | str | None = None, video: Path | 
             if out is not None:
                 t0 = clock()
                 to_8bit = targets[i].suffix.lower() in (".jpg", ".jpeg", ".png")
-                fixed = correct(img, gains, out_dtype=np.uint8 if to_8bit else None, dither=dither, seed=i)
+                fixed = correct(img, gains, out_dtype=np.uint8 if to_8bit else None, dither=dither, seed=i, tone=plan.tone)
                 spent["correct"] += clock() - t0
                 if saved is not None:
                     spent["save"] += saved.result()               # the previous frame's save, done meanwhile
@@ -487,11 +499,11 @@ def apply_finish(plan: FinishPlan, out: Path | str | None = None, video: Path | 
             if video is not None:
                 t0 = clock()
                 if ten_bit:
-                    frame = correct(img, gains, out_dtype=np.uint16)
+                    frame = correct(img, gains, out_dtype=np.uint16, tone=plan.tone)
                 elif fixed is not None and fixed.dtype == np.uint8:
                     frame = fixed
                 else:
-                    frame = correct(img, gains, out_dtype=np.uint8, dither=dither, seed=i)
+                    frame = correct(img, gains, out_dtype=np.uint8, dither=dither, seed=i, tone=plan.tone)
                 t1 = clock()
                 if encoder is None:
                     encoder = _Encoder(partial, frame, fps, width, quality, codec, options)
@@ -578,8 +590,12 @@ def _same_size_or_raise(frames) -> None:
                              f"{first[0]}x{first[1]}, {p.name} is {'x'.join(map(str, _frame_size(p)))}.")
 
 
-def correct(img: np.ndarray, gains_stops, out_dtype=None, dither: bool = False, seed: int = 0) -> np.ndarray:
+def correct(img: np.ndarray, gains_stops, out_dtype=None, dither: bool = False, seed: int = 0,
+            tone=None) -> np.ndarray:
     """One gain per channel, in linear light, through exact lookup tables.
+
+    ``tone``: each brightness level's share of the gain (a ``ToneShares``), for a grade that stretched some
+    levels' flicker more than others. Still one lookup table per channel: no extra work per pixel.
 
     ``out_dtype``: the bit depth to produce (default: the same as ``img``).
     Asking for 16-bit from an 8-bit frame keeps the correction's full
@@ -613,7 +629,10 @@ def correct(img: np.ndarray, gains_stops, out_dtype=None, dither: bool = False, 
         if g == 0 and out_dtype == img.dtype:
             tables.append(None)                          # nothing to change: leave it exactly as it was
             continue
-        exact = _linear_to_srgb(np.clip(linear * 2.0 ** float(g), 0.0, 1.0)) * out_levels
+        scale = tone.at(linear) if tone is not None else 1.0
+        exact = _linear_to_srgb(np.clip(linear * 2.0 ** (float(g) * scale), 0.0, 1.0)) * out_levels
+        if tone is not None:
+            exact = np.maximum.accumulate(exact)       # a brighter level never comes out darker than a dimmer one
         tables.append(np.round(exact).astype(out_dtype) if not dither or out_levels > 255
                       else exact.astype(np.float32))
 

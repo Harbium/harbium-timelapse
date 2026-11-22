@@ -124,6 +124,12 @@ def share(series: np.ndarray, reference: np.ndarray) -> tuple[float, float]:
     g = np.diff(np.asarray(reference, dtype=np.float64), 2)
     p = np.diff(np.asarray(series, dtype=np.float64), 2)
     ok = np.isfinite(g) & np.isfinite(p)
+    if ok.sum() >= 8:
+        # Leave out outsized jumps: a light event (headlights into the lens, a flash) is many times the size of
+        # ordinary flicker and would otherwise decide the whole estimate on its own.
+        spread = 1.4826 * np.median(np.abs(g[ok] - np.median(g[ok])))
+        if spread > 0:
+            ok &= np.abs(g - np.median(g[ok])) <= 5 * spread
     g, p = g[ok], p[ok]
     if g.size < 8 or float(g @ g) <= 0:
         return 1.0, 1.0
@@ -195,6 +201,24 @@ def check_tones(rec: Recorder, reference: np.ndarray | None = None) -> Finding:
     return Finding("ok", "Tones: every brightness level carries the frame's flicker",
                    f"Share of the frame's measured flicker ({flicker:.3f} stops) at each level: {words}. One "
                    "correction suits every level in this sequence." + caveat, fix="Nothing to fix.")
+
+
+def check_tones_after(rec: Recorder, tone) -> Finding:
+    """After a tone-aware correction: the flicker left at each level, judged on the corrected frames."""
+    b, a = _logs(rec.before), _logs(rec.after)
+    ref = b[len(b) // 2]
+    usable = (ref > np.log2(1 / 1000)) & (ref < np.log2(0.97))
+    still = _still(b, usable)
+    edges = np.percentile(ref[still], [p for _, lo, hi in BANDS for p in (lo, hi)])
+    words = []
+    for i, (name, _, _) in enumerate(BANDS):
+        mask = still & (ref >= edges[2 * i]) & (ref < edges[2 * i + 1])
+        if mask.sum() >= 20:
+            words.append(f"{name} {jitter(np.median(b[:, mask], axis=1)):.3f} → "
+                         f"{jitter(np.median(a[:, mask], axis=1)):.3f}")
+    return Finding("ok", "Tones: corrected level by level",
+                   tone.describe() + (" Wobble per level (stops), before → after: " + ", ".join(words) + "."
+                                      if words else ""), fix="Nothing to fix.")
 
 
 def check_regions(rec: Recorder, reference: np.ndarray | None = None) -> Finding:
@@ -285,10 +309,12 @@ def check_blends(measured: np.ndarray, window: int = 8) -> Finding:
                        "smoothly between keyframes). Or raise the smoothness in Finish to round the switch off.")
 
 
-def diagnose(rec: Recorder, measured: np.ndarray, target: np.ndarray, after: np.ndarray) -> list[Finding]:
+def diagnose(rec: Recorder, measured: np.ndarray, target: np.ndarray, after: np.ndarray,
+             tone=None) -> list[Finding]:
     """Every check, in order. ``measured``, ``target`` and ``after`` are per-frame brightness in stops; the
     tone and region checks judge everything against ``measured`` (finish's regional vote)."""
     out = [check_sections(measured, target, after), check_blends(measured)]
     if len(rec.before) >= 10:
-        out += [check_tones(rec, measured), check_regions(rec, measured)]
+        out += [check_tones(rec, measured) if tone is None else check_tones_after(rec, tone),
+                check_regions(rec, measured)]
     return out

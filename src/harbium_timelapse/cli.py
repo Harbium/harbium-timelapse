@@ -250,6 +250,8 @@ def _finish(args) -> int:
     if planned.moving_camera:
         print(f"  Warning: {planned.moving_camera}")
     print(f"  Brightness wobble: {p.brightness_before:.3f} stops now, {p.brightness_after:.3f} after")
+    if p.tone is not None:
+        print(f"  {p.tone.describe()}")
     if not args.brightness_only:
         print(f"  Colour wobble:     {p.colour_before:.3f} now, {p.colour_after:.3f} after")
     print(f"  Largest correction: {p.largest_brightness_correction:.3f} stops"

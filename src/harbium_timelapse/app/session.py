@@ -233,15 +233,21 @@ def _duration(seconds: float) -> str:
 def plan_export(folder: Path, window: int = 25, colour: bool = True, tracker: Tracker | None = None) -> Planned:
     """Measure the exported frames and plan their corrections. Writes nothing."""
     frames = finished_frames(Path(folder).expanduser())
+    from ..tone import ToneShares
     cached = measure_cache.load(frames, "export-channels")
     if cached is not None:
         measured, motion = cached["measured"], float(cached["motion"][0])
+        levels, shares = cached.get("tone_levels"), cached.get("tone_shares")
+        tone = ToneShares(tuple(map(float, levels)), tuple(map(float, shares))) if levels is not None and len(levels) else None
     else:
         meter = Meter(motion=True)
         measured = measure_channels(frames, tracker.stage("Measuring") if tracker else None, meter=meter)
         motion = meter.motion()
-        measure_cache.save(frames, "export-channels", {"measured": measured, "motion": np.full(len(frames), motion)})
-    return Planned(frames, plan_finish(frames, window=window, colour=colour, measured=measured), motion)
+        tone = meter.tone(measured)
+        measure_cache.save(frames, "export-channels", {
+            "measured": measured, "motion": np.full(len(frames), motion),
+            "tone_levels": np.array(tone.levels if tone else []), "tone_shares": np.array(tone.shares if tone else [])})
+    return Planned(frames, plan_finish(frames, window=window, colour=colour, measured=measured, tone=tone), motion)
 
 
 def write_export(planned: Planned, out: Path | None = None, video: Path | None = None, fps: float = 24,
@@ -273,7 +279,8 @@ def write_export(planned: Planned, out: Path | None = None, video: Path | None =
                            timings=timings)
     timings["elapsed"] = time.perf_counter() - began
     try:
-        findings = diagnose(recorder, planned.plan.measured @ LUMA, planned.plan.target @ LUMA, after.series() @ LUMA)
+        findings = diagnose(recorder, planned.plan.measured @ LUMA, planned.plan.target @ LUMA, after.series() @ LUMA,
+                            tone=planned.plan.tone)
     except (ValueError, FloatingPointError, IndexError):
         findings = []
     timings["frames"] = len(planned.frames)

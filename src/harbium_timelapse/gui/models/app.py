@@ -775,6 +775,8 @@ class AppModel:
         p = self.planned.plan
         lines = [f"Brightness wobble {p.brightness_before:.3f} stops before, {self.finished.brightness_after:.3f} after.",
                  f"Colour wobble {p.colour_before:.3f} before, {self.finished.colour_after:.3f} after."]
+        if p.tone is not None:
+            lines.append(p.tone.describe())
         if self.planned.moving_camera:
             lines.append(self.planned.moving_camera)
         if self.finished.where_the_time_went:
