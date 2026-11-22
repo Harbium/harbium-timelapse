@@ -126,6 +126,14 @@ class SlicePanel:
         self.status = self.ui.text("", dim=True, size=13)
         self.words = words
         self._shown = None
+        ui = self.ui
+        self.progress_text = ft.Text("", size=16, color=ui.t["text"], font_family=BODY)
+        self.progress_bar = ft.ProgressBar(value=None, width=420, color=ui.t["text"], bgcolor=ui.t["line"])
+        self.progress = ft.Container(
+            ft.Column([self.progress_text, self.progress_bar,
+                       ui.text("The time slices appear here when they're ready.", dim=True, size=13)],
+                      spacing=10, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+            height=220, alignment=ft.Alignment.CENTER, visible=False)
 
     def control(self) -> ft.Control:
         ui = self.ui
@@ -139,11 +147,19 @@ class SlicePanel:
         return ft.Container(ui.panel(ft.Column(
             [ft.Row([ui.text("Time slice: the scene, with time running", dim=True, size=13), chooser], spacing=8),
              ui.text(self.words + " Click a picture to see it full screen.", dim=True, size=12), self.status,
+             self.progress,
              ft.Container(ft.Row([side("Before", self.before), side("After", self.after)], spacing=8),
                           bgcolor=ui.t["surround"], padding=6, border_radius=2)], spacing=6), padding=12),
             width=self.WIDTH)
 
     def refresh(self) -> None:
+        busy = self.m.preview_progress
+        self.progress.visible = busy is not None
+        self.status.visible = busy is None                    # the progress block says it while busy
+        if busy is not None:
+            done, total = busy
+            self.progress_text.value = self.m.preview_status or "Loading previews..."
+            self.progress_bar.value = (done / total) if total else None
         self.status.value = self.m.preview_status
         pictures = self.m.time_slice()
         if pictures is not None and pictures[0] is not self._shown:

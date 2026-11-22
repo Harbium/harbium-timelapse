@@ -88,6 +88,7 @@ class AppModel:
     def _reset_project_state(self) -> None:
         self.preview_images = None            # small linear previews of the RAW frames, for time slices
         self.preview_status = ""
+        self.preview_progress = None          # (done, total) while previews are being made or loaded
         self._slice = None
         self.measured = None
         self.preview = None
@@ -330,7 +331,9 @@ class AppModel:
             from ...timeslice import MODES, Slice
             self.s.ensure_previews(seq, t)
             slices, means = None, []
+            loading = t.stage("Loading previews")
             for i, f in enumerate(seq):           # each preview hands its own pixels to every mode, then goes
+                loading(i + 1, len(seq))
                 image = previews.load(f.path)
                 if image is None:
                     return None
@@ -346,7 +349,10 @@ class AppModel:
 
         def event(e):
             if isinstance(e, Progress):
-                self.preview_status = f"Making previews {e.done} of {e.total} (once for this folder)"
+                self.preview_progress = (e.done, e.total)
+                self.preview_status = (f"Making previews: {e.done} of {e.total} (once for this folder)"
+                                       if e.stage == "Making previews" else
+                                       f"Loading previews: {e.done} of {e.total}")
             elif isinstance(e, Done):
                 if e.result is None:
                     self.preview_status = "Previews couldn't be made for every frame."
@@ -355,10 +361,12 @@ class AppModel:
                     typical = float(np.median([m for m in means if m > 0] or [1.0]))
                     self._slice_scale = 0.18 / typical
                     self.preview_status = ""
+                    self.preview_progress = None
             elif isinstance(e, Failed):
                 self.preview_status = f"Previews couldn't be made: {e.message}"
             self.changed()
         self.preview_status = "Loading previews..."
+        self.preview_progress = (0, 0)
         self.runner.start("Previews", work, lambda e: self.post(lambda: event(e)))
 
     def time_slice(self) -> tuple[np.ndarray, np.ndarray] | None:

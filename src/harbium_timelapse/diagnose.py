@@ -117,87 +117,108 @@ def _flicker(before: np.ndarray, still: np.ndarray) -> float:
     return jitter(np.median(before[:, still], axis=1))
 
 
-def _removed(jb: float, ja: float) -> tuple[float, float]:
-    """Flicker removed and jitter added: independent wobbles add as squares."""
-    return float(np.sqrt(max(jb * jb - ja * ja, 0))), float(np.sqrt(max(ja * ja - jb * jb, 0)))
+def share(series: np.ndarray, reference: np.ndarray) -> tuple[float, float]:
+    """How much of the measured flicker a series carries (1 = all of it, 0 = none), and how sure that is (the
+    standard error). Frame-to-frame changes of the series against the reference's: anything else moving there
+    (leaves in the wind, walkers) makes the estimate less sure, never a false answer."""
+    g = np.diff(np.asarray(reference, dtype=np.float64), 2)
+    p = np.diff(np.asarray(series, dtype=np.float64), 2)
+    ok = np.isfinite(g) & np.isfinite(p)
+    g, p = g[ok], p[ok]
+    if g.size < 8 or float(g @ g) <= 0:
+        return 1.0, 1.0
+    k = float(g @ p) / float(g @ g)
+    resid = p - k * g
+    se = float(np.std(resid) / (np.std(g) * np.sqrt(g.size)))
+    return k, se
 
 
-def check_tones(rec: Recorder) -> Finding:
-    b, a = _logs(rec.before), _logs(rec.after)
+def _reference(rec: "Recorder", reference: np.ndarray | None, before: np.ndarray, still: np.ndarray) -> np.ndarray:
+    """The frame's measured brightness, in stops: finish's own measurement (the regional vote, built to resist
+    moving content) when given; otherwise the middle brightness of the still pixels."""
+    if reference is not None and len(reference) == len(before):
+        ref = np.asarray(reference, dtype=np.float64)
+        if np.isfinite(ref).sum() >= 8:
+            idx = np.arange(len(ref))
+            good = np.isfinite(ref)
+            return np.interp(idx, idx[good], ref[good])
+    return np.median(before[:, still], axis=1)
+
+
+def check_tones(rec: Recorder, reference: np.ndarray | None = None) -> Finding:
+    b = _logs(rec.before)
     ref = b[len(b) // 2]
     usable = (ref > np.log2(1 / 1000)) & (ref < np.log2(0.97))
     still = _still(b, usable)
-    flicker = _flicker(b, still)
+    frame = _reference(rec, reference, b, still)
+    flicker = jitter(frame)
     if flicker < 0.004:
         return Finding("ok", "Tones: almost no flicker to judge",
-                       f"The still parts of the frame wobbled by only {flicker:.3f} stops before correction.")
+                       f"The frame wobbled by only {flicker:.3f} stops before correction.", fix="Nothing to fix.")
     edges = np.percentile(ref[still], [p for _, lo, hi in BANDS for p in (lo, hi)])
-    rows = []
+    rows, unsure = [], []
     for i, (name, _, _) in enumerate(BANDS):
         mask = still & (ref >= edges[2 * i]) & (ref < edges[2 * i + 1])
         if mask.sum() < 20:
             continue
-        jb, ja = jitter(np.median(b[:, mask], axis=1)), jitter(np.median(a[:, mask], axis=1))
-        rows.append((name, *_removed(jb, ja), jb))
-    worse = [r for r in rows if r[2] > max(0.004, 0.3 * flicker)]
-    short = [r for r in rows if r[1] < 0.6 * flicker and not r in worse]   # noqa: E713
-    words = ", ".join(f"{n} {rem:.3f}" for n, rem, _, _ in rows)
-    if worse:
-        names = " and ".join(r[0] for r in worse)
-        return Finding("look", f"Tones: the {names} picked up flicker",
-                       f"Flicker removed per level (stops): {words}. One correction for every brightness level "
-                       f"over-corrected the {names}, most likely because the grade compressed them.",
+        k, se = share(np.median(b[:, mask], axis=1), frame)
+        (unsure if se > 0.25 else rows).append((name, k, se))
+    words = ", ".join(f"{n} {k * 100:.0f}%" for n, k, _ in rows)
+    low = [(n, k, se) for n, k, se in rows if k + 2 * se < 0.7]
+    caveat = (f" Too much else moves in the {' and '.join(n for n, _, _ in unsure)} to tell." if unsure else "")
+    if low:
+        names = " and ".join(n for n, _, _ in low)
+        worst = max((1 - k) * flicker for _, k, _ in low)
+        return Finding("look", f"Tones: the {names} carry less of the flicker, so they're over-corrected",
+                       f"Share of the frame's measured flicker ({flicker:.3f} stops) at each level: {words}. One "
+                       f"correction for every level adds up to about {worst:.3f} stops of steps in the {names}, most "
+                       "likely because the grade compressed them." + caveat,
                        fix=f"In your editor, ease off whatever compresses the {names} (a strong curve shoulder, or a "
                            "big Highlights or Shadows move), export again and finish again. A tone-aware correction "
                            "in harbium-timelapse would also fix it; it isn't built yet.")
-    if short:
-        names = " and ".join(r[0] for r in short)
-        return Finding("note", f"Tones: the {names} had less flicker removed",
-                       f"Flicker removed per level (stops): {words}, against {flicker:.3f} for the frame. "
-                       "The grade may have compressed them a little; nothing was made worse.",
-                       fix="Nothing to fix.")
-    return Finding("ok", "Tones: every brightness level had the same flicker removed",
-                   f"Flicker removed per level (stops): {words}, matching the frame's {flicker:.3f}. "
-                   "One correction suits every level in this sequence.")
+    if not rows:
+        return Finding("ok", "Tones: too much movement to judge the levels",
+                       "Every brightness level has too much else moving in it (leaves, people, lights) to measure "
+                       "its flicker reliably.", fix="Nothing to fix.")
+    return Finding("ok", "Tones: every brightness level carries the frame's flicker",
+                   f"Share of the frame's measured flicker ({flicker:.3f} stops) at each level: {words}. One "
+                   "correction suits every level in this sequence." + caveat, fix="Nothing to fix.")
 
 
-def flicker_share(before: np.ndarray, still: np.ndarray) -> np.ndarray:
-    """For every pixel, how much of the frame's flicker it shares: 1 = all of it, 0 = none (lit by a steady lamp,
-    say). Each pixel's frame-to-frame changes, compared with the frame's own."""
-    g = np.diff(np.median(before[:, still], axis=1), 2)
-    p = np.diff(before, 2, axis=0)
-    return (g @ p) / max(float(g @ g), 1e-12)
-
-
-def check_regions(rec: Recorder) -> Finding:
+def check_regions(rec: Recorder, reference: np.ndarray | None = None) -> Finding:
     b = _logs(rec.before)
     h, w = rec.before[0].shape
     ref = b[len(b) // 2]
     usable = (ref > np.log2(1 / 1000)) & (ref < np.log2(0.97))
     still = _still(b, usable)
-    flicker = _flicker(b, still)
+    frame = _reference(rec, reference, b, still)
+    flicker = jitter(frame)
     if flicker < 0.004:
-        return Finding("ok", "Regions: almost no flicker to judge", "")
-    share = flicker_share(b, still)
+        return Finding("ok", "Regions: almost no flicker to judge", "", fix="Nothing to fix.")
     rows, cols = GRID
     yy, xx = np.divmod(np.arange(h * w), w)
-    boxes, worst = [], 0.0
+    boxes, worst, unsure = [], 0.0, 0
     for r in range(rows):
         for c in range(cols):
-            cell = still & (yy * rows // h == r) & (xx * cols // w == c)
-            if cell.sum() < 15:
+            cell = usable & (yy * rows // h == r) & (xx * cols // w == c)
+            calm = cell & still
+            pick = calm if calm.sum() >= 15 else cell
+            if pick.sum() < 15:
                 continue
-            k = float(np.mean(share[cell]))
-            if k < 0.6:                                   # most of the cell kept out of the flicker
+            k, se = share(np.median(b[:, pick], axis=1), frame)
+            if se > 0.25:
+                unsure += 1                              # too much else moving here to tell
+            elif k + 2 * se < 0.6:                       # confidently carries much less of the flicker
                 boxes.append((r / rows, c / cols, (r + 1) / rows, (c + 1) / cols))
                 worst = max(worst, (1 - k) * flicker)
+    note = f" {unsure} area{'s' if unsure != 1 else ''} had too much movement to judge." if unsure else ""
     if not boxes:
-        return Finding("ok", "Regions: every area shared the flicker",
-                       "The correction steadied every part of the frame it could measure.")
+        return Finding("ok", "Regions: every area carries the frame's flicker",
+                       "The correction suits every part of the frame it could judge." + note, fix="Nothing to fix.")
     return Finding("look", f"Regions: {len(boxes)} area{'s' if len(boxes) > 1 else ''} picked up small steps",
-                   "These areas didn't share the frame's flicker (often because steady lamps light them while the "
-                   f"daylight wobbled), so correcting the whole frame added steps of up to about {worst:.3f} stops "
-                   "there.", boxes=boxes,
+                   "These areas carry much less of the frame's flicker (often because steady lamps light them while "
+                   f"the daylight wobbled), so correcting the whole frame added steps of up to about {worst:.3f} "
+                   "stops there." + note, boxes=boxes,
                    fix="In your editor, mask the marked areas and give them the opposite of the correction (or simply "
                        "exclude them from your deflicker if your editor allows it), then export and finish again. If the "
                        "steps are hard to see in the film, it's fine to leave them.")
@@ -253,8 +274,9 @@ def check_blends(measured: np.ndarray, window: int = 8) -> Finding:
 
 
 def diagnose(rec: Recorder, measured: np.ndarray, target: np.ndarray, after: np.ndarray) -> list[Finding]:
-    """Every check, in order. ``measured``, ``target`` and ``after`` are per-frame brightness in stops."""
+    """Every check, in order. ``measured``, ``target`` and ``after`` are per-frame brightness in stops; the
+    tone and region checks judge everything against ``measured`` (finish's regional vote)."""
     out = [check_sections(measured, target, after), check_blends(measured)]
     if len(rec.before) >= 10:
-        out += [check_tones(rec), check_regions(rec)]
+        out += [check_tones(rec, measured), check_regions(rec, measured)]
     return out
