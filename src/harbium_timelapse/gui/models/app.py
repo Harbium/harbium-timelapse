@@ -264,6 +264,14 @@ class AppModel:
         if self.opened is None:
             return []
         cards, changes = [], [p for p in self.opened.problems if p.kind == "settings_change"]
+        if self.raw_without_edits:
+            cards.append({"serious": True, "note": False,
+                          "message": "These are RAW files, but there are no editor edit files beside them yet, so "
+                                     "there's nowhere for Prepare to write its corrections.",
+                          "fix": "RapidRAW: open the folder and give every frame an edit (your starting grade is "
+                                 "fine), so each gets its .rrdata file. Lightroom: import the folder, select every "
+                                 "frame and choose Metadata > Save Metadata to Files. Then open the folder here "
+                                 "again. (Finish is for the frames you export afterwards, not the RAW files.)"})
         for p in self.opened.problems:
             if p.kind != "settings_change":
                 cards.append({"serious": p.serious, "message": p.message, "fix": p.fix, "note": False})
@@ -282,7 +290,16 @@ class AppModel:
     def next_step(self) -> tuple[str, str]:
         if self.opened is not None and self.opened.editor is not None:
             return "prepare", "Next: preview corrections"
+        if self.raw_without_edits:
+            return "prepare", "Open these in your editor first"          # disabled: Prepare needs edit files
         return "finish", "Next: finish an export"
+
+    @property
+    def raw_without_edits(self) -> bool:
+        """RAW files with no editor edit files beside them: Prepare has nowhere to write, and Finish needs exports."""
+        from ...sequencer import RAW_EXTENSIONS
+        return (self.opened is not None and self.opened.editor is None
+                and any(f.path.suffix.lower() in RAW_EXTENSIONS for f in self.opened.seq))
 
     @property
     def resume(self) -> tuple[str, str] | None:

@@ -188,3 +188,17 @@ def test_an_export_only_folder_never_shows_prepare_or_grade_as_done(tmp_path):
     m.project.reach("finished")
     states = {s: state for s, _, state in m.stage_items()}
     assert states["prepare"] == "locked" and states["grade"] == "locked"
+
+
+def test_raw_files_without_edit_files_explain_what_to_do(tmp_path):
+    raw = tmp_path / "sunset"
+    raw.mkdir()
+    for i in range(6):
+        (raw / f"181A{880 + i}.CR3").write_bytes(b"")
+    m = AppModel(services=services())
+    m.open_folder(raw)
+    m.wait()
+    target, label = m.next_step
+    assert m.raw_without_edits and label == "Open these in your editor first" and not m.can_go(target)
+    card = m.problems[0]
+    assert card["serious"] and "Save Metadata to Files" in card["fix"] and ".rrdata" in card["fix"]
