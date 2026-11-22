@@ -150,8 +150,13 @@ def _why_not_exact(seq: Sequence) -> str:
             f"(first: {missing[0]}); this needs ExifTool.")
 
 
-def apply_white_balance(seq: Sequence, plan: WhiteBalancePlan) -> int:
-    """Write each frame's Kelvin into RapidRAW's whiteBalance field."""
+FIXED = 25.0          # Kelvin: smaller jumps than this mean the camera's white balance was fixed
+
+
+def apply_white_balance(seq: Sequence, plan: WhiteBalancePlan) -> tuple[int, int]:
+    """Write each frame's Kelvin into RapidRAW's whiteBalance field, only where it's still the camera's own (or one
+    this tool wrote earlier). Purple keyframes and any white balance you set yourself are never touched.
+    Returns (frames steadied, frames kept as you set them)."""
     missing = [f.name for f in seq if read_sidecar(f.path) is None]
     if missing:
         raise ValueError(f"{len(missing)} frames have no RapidRAW sidecar (first: {missing[0]}). "
@@ -159,12 +164,20 @@ def apply_white_balance(seq: Sequence, plan: WhiteBalancePlan) -> int:
     for k, t in zip(plan.kelvin, plan.tint, strict=True):   # every value checked before anything is written
         finite(k, "white balance")
         finite(t, "tint")
+    from .keyframes import KEYFRAME_LABEL
+    changed = kept = 0
     with ledger_kept_in_step(seq.folder) as ledger:
         for f, k, t in zip(seq, plan.kelvin, plan.tint, strict=True):
             tint = int(t) if t == int(t) else float(t)
             data = read_sidecar(f.path)
-            adjustments = data.setdefault("adjustments", {})
+            if not isinstance(data.get("adjustments"), dict):
+                data["adjustments"] = {}
+            adjustments = data["adjustments"]
             before = adjustments.get("whiteBalance")
+            ours = (ledger.get(f.name) or {}).get("white_balance")
+            if KEYFRAME_LABEL in (data.get("tags") or []) or (before is not None and before != ours):
+                kept += 1                                 # a keyframe, or a white balance you chose: yours
+                continue
             keep_original(f.path)
             adjustments["whiteBalance"] = {"temperature": int(k), "tint": tint}
             write_sidecar(f.path, data)
@@ -172,7 +185,8 @@ def apply_white_balance(seq: Sequence, plan: WhiteBalancePlan) -> int:
             entry = ledger.setdefault(f.name, {"base": float(adjustments.get("exposure") or 0.0), "applied": 0.0})
             entry.setdefault("white_balance_before", before)
             entry["white_balance"] = adjustments["whiteBalance"]
-    return len(seq)
+            changed += 1
+    return changed, kept
 
 
 def undo_white_balance(seq: Sequence) -> int:

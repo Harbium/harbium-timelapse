@@ -140,6 +140,8 @@ def test_the_export_is_noticed_finished_and_reviewed(folder, tmp_path):
     m.poll_export()
     assert m.export.state == "waiting"
     sky(folder.parent / "final-export")
+    for i, f in enumerate(sorted((folder.parent / "final-export").iterdir())):   # named after the RAW frames
+        f.rename(f.with_name(f"IMG_{1000 + i}{f.suffix}"))
     m.poll_export()
     assert m.export.state == "arriving" and m.export.folder.name == "final-export"
     m.use_export()

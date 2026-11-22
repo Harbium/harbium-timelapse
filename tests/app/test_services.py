@@ -127,7 +127,10 @@ def frames_in(folder, n, when=None):
 
 def test_export_is_noticed_counted_and_called_complete(tmp_path):
     raw = tmp_path / "timelapse photos"
-    frames_in(raw, 3)                                   # the RAW folder itself never counts
+    raw.mkdir()
+    for i in range(10):                                 # the RAW frames: exports are named after them
+        (raw / f"f{i:03d}.CR3").write_bytes(b"")
+    frames_in(raw, 3)                                   # images in the RAW folder itself never count
     since = time.time() - 1
     assert session.export_status(raw, 10, since).state == "waiting"
     frames_in(tmp_path / "old-export", 10, when=since - 100)       # made before: ignored
@@ -166,3 +169,19 @@ def test_a_video_only_finish_saves_its_report(tmp_path):
     sky_frames(tmp_path / "e")
     done = session.write_export(session.plan_export(tmp_path / "e"), video=tmp_path / "film.mp4")
     assert done.report == tmp_path / "film.timelapse-report.json" and done.report.exists()
+
+
+def test_a_screenshot_next_door_is_never_taken_for_the_export(tmp_path):
+    """Regression: a screenshot saved to Pictures/Screenshots showed as 'Export arriving: 1 of 130 frames'."""
+    raw = tmp_path / "sunset-test"
+    raw.mkdir()
+    for i in range(5):
+        (raw / f"181A{834 + i}.CR3").write_bytes(b"")
+    since = time.time() - 1
+    (tmp_path / "Screenshots").mkdir()
+    (tmp_path / "Screenshots" / "Screenshot 2026-11-22 211500.png").write_bytes(b"x")
+    assert session.export_status(raw, 5, since).state == "waiting"
+    (tmp_path / "export").mkdir()
+    (tmp_path / "export" / "181A834.jpg").write_bytes(b"x")
+    s = session.export_status(raw, 5, since)
+    assert (s.state, s.folder.name, s.frames) == ("arriving", "export", 1)

@@ -9,7 +9,7 @@ from ..base import Editor, PrepareReport
 from .deflicker import apply, check, load, plan, undo
 from .recover import rapidraw_running
 from .sidecar import SUFFIX
-from .whitebalance import apply_white_balance, plan_white_balance, undo_white_balance
+from .whitebalance import FIXED, apply_white_balance, plan_white_balance, undo_white_balance
 
 BLOCKING = {"too_short", "mixed_files", "mixed_cameras"}
 
@@ -41,13 +41,19 @@ class RapidRAW(Editor):
         if white_balance:
             try:
                 wb = plan_white_balance(seq)
-                report.notes.extend(f"White balance: {n}" for n in wb.notes)
-                report.notes.append(
-                    f"White balance: steadied to {wb.kelvin.min():.0f}-{wb.kelvin.max():.0f} K "
-                    f"(the camera jumped up to {wb.biggest_jump_before:.0f} K between frames; now at most "
-                    f"{wb.biggest_jump_after:.0f} K).")
-                if not dry_run:
-                    apply_white_balance(seq, wb)
+                if wb.biggest_jump_before < FIXED:
+                    report.notes.append(f"White balance: the camera's stayed fixed (about {wb.as_shot[0]:.0f} K), "
+                                        "so there's nothing to steady. Left as it is.")
+                else:
+                    report.notes.extend(f"White balance: {n}" for n in wb.notes)
+                    report.notes.append(
+                        f"White balance: the camera's jumped by up to {wb.biggest_jump_before:.0f} K between frames; "
+                        f"steadied to at most {wb.biggest_jump_after:.0f} K. Keyframes and any white balance you "
+                        "set yourself are left alone.")
+                    if not dry_run:
+                        changed, kept = apply_white_balance(seq, wb)
+                        if kept:
+                            report.notes.append(f"White balance: kept your own on {kept} frames.")
             except ValueError as e:
                 report.notes.append(f"White balance left as it is: {e}")
 

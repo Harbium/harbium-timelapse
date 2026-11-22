@@ -211,3 +211,33 @@ def test_cli_reports_the_scale(folder, capsys, monkeypatch):
     assert cli._white_balance(seq, args) == 0
     out = capsys.readouterr().out
     assert "RapidRAW's own scale" in out and "Dry run" in out and "+9" in out
+
+
+def test_keyframes_and_white_balance_you_set_are_never_overwritten(folder):
+    """Regression: steadying wrote one temperature into every frame, over a graded keyframe's own."""
+    from harbium_timelapse.editors.rapidraw.sidecar import write_sidecar
+    path, images, kelvin = folder
+    key, mine = read_sidecar(images[0]), read_sidecar(images[10])
+    key["tags"] = ["color:purple"]
+    key["adjustments"]["whiteBalance"] = {"temperature": 4300, "tint": 12}      # graded keyframe
+    mine["adjustments"]["whiteBalance"] = {"temperature": 5100, "tint": -3}     # set by hand
+    write_sidecar(images[0], key)
+    write_sidecar(images[10], mine)
+    seq = with_kelvin(load(path), kelvin)
+    changed, kept = apply_white_balance(seq, plan_white_balance(seq))
+    assert (changed, kept) == (148, 2)
+    assert read_sidecar(images[0])["adjustments"]["whiteBalance"] == {"temperature": 4300, "tint": 12}
+    assert read_sidecar(images[10])["adjustments"]["whiteBalance"] == {"temperature": 5100, "tint": -3}
+    again = apply_white_balance(seq, plan_white_balance(seq, 5600))          # its own earlier writes stay updatable
+    assert again == (148, 2)
+
+
+def test_a_fixed_camera_white_balance_is_left_alone(folder):
+    """Regression: with the camera fixed at one Kelvin, prepare 'steadied' it anyway and reported '0 K jumps'."""
+    from harbium_timelapse.editors.rapidraw.adapter import RapidRAW
+    path, images, _ = folder
+    seq = with_kelvin(load(path), np.full(150, 7345.0))
+    before = [(read_sidecar(i).get("adjustments") or {}).get("whiteBalance") for i in images]
+    report = RapidRAW().prepare(seq, window=25, raw_brightness=np.zeros(150))
+    assert any("stayed fixed" in n for n in report.notes)
+    assert [(read_sidecar(i).get("adjustments") or {}).get("whiteBalance") for i in images] == before

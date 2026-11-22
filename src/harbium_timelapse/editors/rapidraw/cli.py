@@ -311,8 +311,9 @@ def _white_balance(seq, args) -> int:
             print(f"    {seq[i].name}: camera {shot}{shot_tint} -> {wb.kelvin[i]:.0f} K {wb.tint[i]:+.1f}")
         print("  Dry run: nothing written.")
         return 0
-    print(f"  Wrote white balance to {apply_white_balance(seq, wb)} frames. Your Temperature and Tint "
-          "sliders are left as they are, on top.")
+    changed, kept = apply_white_balance(seq, wb)
+    print(f"  Wrote white balance to {changed} frames" + (f" (kept your own on {kept})" if kept else "") +
+          ". Your Temperature and Tint sliders are left as they are, on top.")
     print("  Undo with: timelapse-rapidraw white-balance FOLDER --undo")
     print(f"  {CLOSE_FIRST}")
     return 0

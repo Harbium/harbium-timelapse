@@ -134,6 +134,13 @@ def export_status(raw_folder: Path, expected: int, since: float, now: float | No
     frames and nothing in it has changed for ``QUIET`` seconds."""
     raw_folder = Path(raw_folder).resolve()
     now = time.time() if now is None else now
+    # Only images named after the frames count (181A0834.jpg for 181A0834.CR3): a screenshot or anything
+    # else landing in a folder nearby is never taken for the export.
+    try:
+        stems = {p.name.split(".")[0].lower() for p in raw_folder.iterdir() if p.is_file()
+                 and not p.name.startswith(".") and not p.name.endswith((".rrdata", ".xmp", ".json"))}
+    except OSError:
+        stems = set()
     candidates = []
     for parent in (raw_folder, raw_folder.parent):
         try:
@@ -145,7 +152,8 @@ def export_status(raw_folder: Path, expected: int, since: float, now: float | No
     best, best_count, newest = None, 0, 0.0
     for d in candidates:
         try:
-            files = [f for f in d.iterdir() if f.suffix.lower() in FRAME_SUFFIXES]
+            files = [f for f in d.iterdir() if f.suffix.lower() in FRAME_SUFFIXES
+                     and (not stems or f.name.split(".")[0].lower() in stems)]
             stamps = [f.stat().st_mtime for f in files]
         except OSError:
             continue
