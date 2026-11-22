@@ -300,3 +300,31 @@ def test_exposure_and_temperature_can_be_written_into_a_label_only_file():
     set_exposure(data, 0.25)
     set_temperature(data, -3)
     assert data["adjustments"] == {"exposure": 0.25, "temperature": -3}
+
+
+def test_blending_creates_every_missing_edit_file_with_every_setting(tmp_path):
+    """Regression: only exposure reached the in-between frames. With keyframes graded in RapidRAW and no edit
+    files on the frames between them, the blend now creates those files and carries every setting."""
+    import json
+    from pathlib import Path
+    from harbium_timelapse.editors.rapidraw.keyframes import blend
+    from harbium_timelapse.editors.rapidraw.sidecar import read_sidecar, write_sidecar
+    from harbium_timelapse.sequencer import load_sequence
+    real = json.loads((Path(__file__).parent / "fixtures" / "181A0968.CR3.rrdata").read_text(encoding="utf-8"))
+    for i in range(5):
+        (tmp_path / f"181A{834 + i}.CR3").write_bytes(b"")
+    first, last = json.loads(json.dumps(real)), json.loads(json.dumps(real))
+    for k, (data, contrast, shadows, kelvin) in enumerate([(first, 10, 35, 4300), (last, 50, 5, 6300)]):
+        data["tags"] = ["color:purple"]
+        data["adjustments"].update(contrast=contrast, shadows=shadows,
+                                   whiteBalance={"temperature": kelvin, "tint": 0})
+    write_sidecar(tmp_path / "181A834.CR3", first)
+    write_sidecar(tmp_path / "181A838.CR3", last)
+    result = blend(load_sequence(tmp_path))
+    assert result.created == 3
+    middle = read_sidecar(tmp_path / "181A836.CR3")
+    assert set(middle["adjustments"]) == set(real["adjustments"])            # every setting, not just exposure
+    assert 10 < middle["adjustments"]["contrast"] < 50 and 5 < middle["adjustments"]["shadows"] < 35
+    assert 4300 < middle["adjustments"]["whiteBalance"]["temperature"] < 6300
+    assert "color:purple" not in (middle.get("tags") or [])                 # in-betweens aren't keyframes
+    assert read_sidecar(tmp_path / "181A834.CR3")["adjustments"]["contrast"] == 10   # keyframes untouched

@@ -151,11 +151,13 @@ def _main(argv: list[str] | None = None) -> int:
         return 1
     print(f"{len(seq)} frames in {seq.folder}")
     problems = check(seq)
-    if args.command == "suggest-keyframes" and args.label:
-        # Labelling creates the keyframes' edit files itself: say so instead of asking for them.
+    creates = {"suggest-keyframes": "Labelling will create an edit file for each keyframe.",
+               "keyframes": "Blending will create them, carrying your keyframes' settings."}
+    if args.command in creates and (args.command != "suggest-keyframes" or args.label):
+        # These commands create the missing edit files themselves: say so instead of asking for them.
         import dataclasses
         problems = [dataclasses.replace(p, serious=False, message=p.message.split(", so there's nowhere")[0]
-                                        + ". Labelling will create an edit file for each keyframe.")
+                                        + ". " + creates[args.command])
                     if p.kind == "no_sidecar" else p for p in problems]
     for p in problems:
         print(f"  {p}")
@@ -271,7 +273,8 @@ def _keyframes(seq, args, problems) -> int:
         print(e, file=sys.stderr)
         return 1
     print(f"  Blended between {len(result.keyframes)} keyframes: {', '.join(result.keyframes)}")
-    print(f"  Updated {result.changed} frames.")
+    print(f"  Updated {result.changed} frames" +
+          (f", creating edit files for {result.created} that had none." if result.created else "."))
     _report_held(result.held)
     print("  Deflicker was reset by this. Next: timelapse-rapidraw deflicker FOLDER")
     print(f"  {CLOSE_FIRST}")

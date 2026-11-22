@@ -103,6 +103,7 @@ class BlendResult:
     keyframes: list[str]
     changed: int
     held: dict[str, str] = field(default_factory=dict)   # setting -> why it couldn't blend
+    created: int = 0                                     # frames that had no edit file and got one
 
 
 _MISSING = object()  # a setting a keyframe's sidecar doesn't contain at all
@@ -135,17 +136,18 @@ def plan_blend(seq: Sequence, label: str = KEYFRAME_LABEL) -> tuple[list[dict], 
 
 
 def blend(seq: Sequence, label: str = KEYFRAME_LABEL) -> BlendResult:
-    """Replace every frame's edit with the blend between keyframes."""
-    missing = [f.name for f in seq if read_sidecar(f.path) is None]
-    if missing:
-        raise ValueError(f"{len(missing)} frames have no RapidRAW sidecar (first: {missing[0]}). "
-                         "Paste settings onto every frame first.")
+    """Replace every frame's edit with the blend between keyframes. A frame with no edit file yet gets one:
+    RapidRAW's own minimal file, holding the full blended settings, which come from your keyframes' files
+    (written by RapidRAW, so they carry every setting)."""
     per_frame, keys, held = plan_blend(seq, label)
-    changed = 0
+    changed = created = 0
     with ledger_kept_in_step(seq.folder) as ledger:
         steady_wb = {name: dict(e) for name, e in ledger.items() if "white_balance" in e}
         for f, adj in zip(seq, per_frame, strict=True):
             data = read_sidecar(f.path)
+            if data is None:
+                data = minimal_sidecar()             # no edit file yet: RapidRAW's own format, settings below
+                created += 1
             if f.name in steady_wb:          # white balance set by the white-balance command stays
                 adj = {**adj, "whiteBalance": steady_wb[f.name]["white_balance"]}
             if data.get("adjustments") != adj:
@@ -161,7 +163,7 @@ def blend(seq: Sequence, label: str = KEYFRAME_LABEL) -> BlendResult:
             else:
                 ledger.pop(f.name, None)
     (seq.folder / STATE_DIR / "refine.json").unlink(missing_ok=True)
-    return BlendResult([seq[i].name for i in keys], changed, held)
+    return BlendResult([seq[i].name for i in keys], changed, held, created)
 
 
 def frames_off_the_blend(seq: Sequence, label: str = KEYFRAME_LABEL) -> list[tuple[str, list[str]]]:
