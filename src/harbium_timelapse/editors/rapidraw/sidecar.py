@@ -48,7 +48,7 @@ def write_sidecar(image: Path, data: dict) -> None:
     """Write atomically: a crash mid-write never leaves a half-written sidecar."""
     path = sidecar_path(image)
     temp = path.with_name(path.name + ".tmp")  # doesn't match RapidRAW's *.rrdata scan
-    temp.write_text(dump(data), encoding="utf-8")
+    temp.write_text(dump(data), encoding="utf-8", newline="")   # RapidRAW's line endings (LF), even on Windows
     os.replace(temp, path)
 
 
@@ -65,11 +65,19 @@ def finite(value: float, what: str) -> float:
     return v
 
 
+def _settings(data: dict) -> dict:
+    """The file's settings, ready to change. RapidRAW writes "adjustments": null for a frame with no settings
+    (a label only), so a missing or null block becomes an empty one."""
+    if not isinstance(data.get("adjustments"), dict):
+        data["adjustments"] = {}
+    return data["adjustments"]
+
+
 def set_exposure(data: dict, stops: float) -> None:
     value = round(finite(stops, "exposure"), 4)
     # RapidRAW writes whole numbers without a decimal point (1, not 1.0). Match it,
     # so an undo leaves the file byte-for-byte as it was.
-    data.setdefault("adjustments", {})["exposure"] = int(value) if value == int(value) else value
+    _settings(data)["exposure"] = int(value) if value == int(value) else value
 
 
 def with_sidecar_settings(frame: Frame, data: dict | None) -> Frame:
@@ -131,4 +139,4 @@ def get_temperature(data: dict) -> float:
 
 def set_temperature(data: dict, value: float) -> None:
     v = round(finite(value, "temperature"), 2)
-    data.setdefault("adjustments", {})["temperature"] = int(v) if v == int(v) else v
+    _settings(data)["temperature"] = int(v) if v == int(v) else v

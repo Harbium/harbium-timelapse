@@ -137,6 +137,6 @@ def _rebuild(seq: Sequence) -> tuple[int, int]:
         entry["base"] = round(base, 4)
     write_ledger(folder, ledger)
     if history is not None:
-        history_path.write_text(history, encoding="utf-8")
+        history_path.write_text(history, encoding="utf-8", newline="")
     safety.unlink(missing_ok=True)          # finished: the safety copy isn't needed
     return len(seq), len(keys)

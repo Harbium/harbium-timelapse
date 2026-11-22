@@ -26,3 +26,13 @@ jobs:
           python-version: "3.13"
       - run: pip install -e ".[dev]"
       - run: pytest -q
+  windows:
+    # James works on Windows: line endings, paths and file locking behave differently there.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install -e ".[dev,tiff]"
+      - run: pytest -q

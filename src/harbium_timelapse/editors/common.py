@@ -51,7 +51,7 @@ def write_json(path: Path, data: dict, indent: int | None = 2) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     temp = path.with_name(path.name + ".tmp")
-    temp.write_text(json.dumps(data, indent=indent), encoding="utf-8")
+    temp.write_text(json.dumps(data, indent=indent), encoding="utf-8", newline="")   # LF, even on Windows
     os.replace(temp, path)
 
 
@@ -156,7 +156,7 @@ def folder_lock(folder: Path):
             raise ValueError(
                 f"Another run is changing this folder right now (started {when}). Wait for it to "
                 f"finish. If nothing else is running, delete {path} and try again.") from None
-    with os.fdopen(fd, "w") as f:
+    with os.fdopen(fd, "w", newline="") as f:
         f.write(json.dumps({"pid": os.getpid(), "started": time.time()}))
     _held[key] = 1
     try:

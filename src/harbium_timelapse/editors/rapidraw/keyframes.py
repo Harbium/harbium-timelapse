@@ -84,9 +84,10 @@ def label_keyframes(seq: Sequence, frames: list[int], label: str = KEYFRAME_LABE
 
 
 def minimal_sidecar() -> dict:
-    """The smallest RapidRAW edit file: no settings (RapidRAW reads missing settings as defaults), no rating,
-    no tags yet. Field order and format match the files RapidRAW writes."""
-    return {"version": 1, "rating": 0, "adjustments": {}, "tags": []}
+    """The smallest RapidRAW edit file, exactly as RapidRAW itself writes one for a frame that's only been
+    labelled: no settings ("adjustments": null), no rating, no tags yet (checked byte for byte against a file
+    RapidRAW wrote)."""
+    return {"version": 1, "rating": 0, "adjustments": None, "tags": []}
 
 
 def suggest(seq: Sequence, every: float = 1.0, warmth_every: float = 0.5,

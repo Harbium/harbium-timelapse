@@ -263,7 +263,7 @@ def test_labelling_a_frame_with_no_edit_file_creates_a_minimal_one(tmp_path):
     notes = label_keyframes(seq, [0, 3])
     assert len(notes) == 2 and all("edit file created" in n for n in notes)
     data = json.loads((tmp_path / "181A880.CR3.rrdata").read_text(encoding="utf-8"))
-    assert data == {"version": 1, "rating": 0, "adjustments": {}, "tags": [KEYFRAME_LABEL]}
+    assert data == {"version": 1, "rating": 0, "adjustments": None, "tags": [KEYFRAME_LABEL]}
     assert keyframes_in(seq) == [0, 3] and not (tmp_path / "181A881.CR3.rrdata").exists()   # only keyframes
 
 
@@ -279,3 +279,24 @@ def test_suggest_and_label_works_on_a_folder_with_no_edit_files(tmp_path, monkey
     out = capsys.readouterr().out
     assert "Labelling will create an edit file" in out and "Labelled purple" in out
     assert (tmp_path / "181A880.CR3.rrdata").exists() and (tmp_path / "181A884.CR3.rrdata").exists()
+
+
+def test_a_created_label_file_is_byte_for_byte_what_rapidraw_writes(tmp_path):
+    """The reference is a file RapidRAW 1.7 wrote itself after labelling an unedited frame purple:
+    "adjustments": null, LF line endings, no trailing newline."""
+    from pathlib import Path
+    from harbium_timelapse.editors.rapidraw.keyframes import label_keyframes
+    from harbium_timelapse.sequencer import load_sequence
+    reference = (Path(__file__).parent / "fixtures" / "rapidraw-1.7-label-only.rrdata").read_bytes()
+    for i in range(3):
+        (tmp_path / f"181A{834 + i}.CR3").write_bytes(b"")
+    label_keyframes(load_sequence(tmp_path), [0])
+    assert (tmp_path / "181A834.CR3.rrdata").read_bytes() == reference and b"\r" not in reference
+
+
+def test_exposure_and_temperature_can_be_written_into_a_label_only_file():
+    from harbium_timelapse.editors.rapidraw.sidecar import set_exposure, set_temperature
+    data = {"version": 1, "rating": 0, "adjustments": None, "tags": ["color:purple"]}
+    set_exposure(data, 0.25)
+    set_temperature(data, -3)
+    assert data["adjustments"] == {"exposure": 0.25, "temperature": -3}
