@@ -67,7 +67,11 @@ def label_keyframes(seq: Sequence, frames: list[int], label: str = KEYFRAME_LABE
         f = seq[i]
         data = read_sidecar(f.path)
         if data is None:
-            raise ValueError(f"{f.name} has no RapidRAW sidecar yet. Paste settings onto every frame first.")
+            # No edit file yet (RapidRAW only makes one once a frame is edited). Write the smallest one RapidRAW
+            # reads: the label and no settings, so the frame stays exactly as RapidRAW would show it unedited.
+            # Grading the keyframe in RapidRAW then rewrites it in full, keeping the label.
+            data = minimal_sidecar()
+            notes.append(f"{f.name}: edit file created for the label")
         tags = list(data.get("tags") or [])
         if label in tags:
             continue
@@ -77,6 +81,12 @@ def label_keyframes(seq: Sequence, frames: list[int], label: str = KEYFRAME_LABE
         data["tags"] = [t for t in tags if not t.startswith("color:")] + [label]
         write_sidecar(f.path, data)
     return notes
+
+
+def minimal_sidecar() -> dict:
+    """The smallest RapidRAW edit file: no settings (RapidRAW reads missing settings as defaults), no rating,
+    no tags yet. Field order and format match the files RapidRAW writes."""
+    return {"version": 1, "rating": 0, "adjustments": {}, "tags": []}
 
 
 def suggest(seq: Sequence, every: float = 1.0, warmth_every: float = 0.5,

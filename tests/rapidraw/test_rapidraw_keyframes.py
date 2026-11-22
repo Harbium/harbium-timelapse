@@ -250,3 +250,18 @@ def test_curve_tracing_matches_the_points():
     traced = _curve_at(c, list(range(256)))
     assert all(a <= b for a, b in zip(traced, traced[1:]))           # monotone: no new bumps
     assert _curve_at(curve((20, 5), (255, 255)), [0, 10]) == [5, 5]   # flat before the first point
+
+
+def test_labelling_a_frame_with_no_edit_file_creates_a_minimal_one(tmp_path):
+    """RapidRAW (1.6.3 on) only writes an edit file once a frame is edited, so keyframes may have none yet."""
+    import json
+    from harbium_timelapse.editors.rapidraw.keyframes import KEYFRAME_LABEL, keyframes_in, label_keyframes
+    from harbium_timelapse.sequencer import load_sequence
+    for i in range(4):
+        (tmp_path / f"181A{880 + i}.CR3").write_bytes(b"")
+    seq = load_sequence(tmp_path)
+    notes = label_keyframes(seq, [0, 3])
+    assert len(notes) == 2 and all("edit file created" in n for n in notes)
+    data = json.loads((tmp_path / "181A880.CR3.rrdata").read_text(encoding="utf-8"))
+    assert data == {"version": 1, "rating": 0, "adjustments": {}, "tags": [KEYFRAME_LABEL]}
+    assert keyframes_in(seq) == [0, 3] and not (tmp_path / "181A881.CR3.rrdata").exists()   # only keyframes
