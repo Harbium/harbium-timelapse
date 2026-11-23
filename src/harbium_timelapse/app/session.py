@@ -7,6 +7,7 @@ finishing steps, so the two can't drift apart.
 
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -147,6 +148,11 @@ def export_status(raw_folder: Path, expected: int, since: float, now: float | No
                  and not p.name.startswith(".") and not p.name.endswith((".rrdata", ".xmp", ".json"))}
     except OSError:
         stems = set()
+
+    def named_after_a_frame(name: str) -> bool:
+        # 181A0834.jpg, or with an editor's suffix: RapidRAW writes 181A0834_edited.jpeg
+        base = name.split(".")[0].lower()
+        return not stems or any(part in stems for part in (base, re.split(r"[_\- ]", base)[0]))
     candidates = []
     for parent in (raw_folder, raw_folder.parent):
         try:
@@ -158,9 +164,10 @@ def export_status(raw_folder: Path, expected: int, since: float, now: float | No
     best, best_count, newest = None, 0, 0.0
     for d in candidates:
         try:
-            files = [f for f in d.iterdir() if f.suffix.lower() in FRAME_SUFFIXES
-                     and (not stems or f.name.split(".")[0].lower() in stems)]
-            stamps = [f.stat().st_mtime for f in files]
+            files = [f for f in d.iterdir() if f.suffix.lower() in FRAME_SUFFIXES and named_after_a_frame(f.name)]
+            # When the file appeared: RapidRAW's export keeps the photo's own date as the modified time, so the
+            # later of modified and created (the change time elsewhere) is what says "new".
+            stamps = [max(st.st_mtime, st.st_ctime) for st in (f.stat() for f in files)]
         except OSError:
             continue
         fresh = [m for m in stamps if m >= since]
@@ -384,3 +391,75 @@ def blend_keyframes(editor: Editor, seq: Sequence):
     from ..editors.rapidraw.keyframes import blend
     _rapidraw_closed(editor)
     return blend(seq)
+
+
+# --- exporting through RapidRAW's command line ------------------------------------------------------------
+
+def find_rapidraw() -> Path | None:
+    """RapidRAW's program: the usual Windows install places, then the PATH."""
+    import os
+    import shutil
+    places = []
+    for root in (os.environ.get("LOCALAPPDATA"), os.environ.get("ProgramFiles"), os.environ.get("ProgramFiles(x86)")):
+        if root:
+            places.append(Path(root) / "RapidRAW" / "RapidRAW.exe")
+    found = shutil.which("rapidraw") or shutil.which("RapidRAW")
+    if found:
+        places.append(Path(found))
+    return next((p for p in places if p.is_file()), None)
+
+
+def export_folder_for(raw_folder: Path) -> Path:
+    """A new, empty folder beside the RAW folder for the export: "<name> export", numbered if that's taken."""
+    raw_folder = Path(raw_folder)
+    for n in range(1, 100):
+        candidate = raw_folder.parent / (f"{raw_folder.name} export" + (f" {n}" if n > 1 else ""))
+        if not candidate.exists() or not any(candidate.iterdir()):
+            return candidate
+    raise ValueError("Couldn't find a free folder name for the export.")
+
+
+def export_with_rapidraw(seq: Sequence, out: Path | None = None, fmt: str = "jpeg", quality: int = 95,
+                         tracker: Tracker | None = None, program: Path | None = None) -> Path:
+    """Render every frame with its RapidRAW edit, through RapidRAW's command-line export (RapidRAW 1.6+), into
+    ``out`` (default: a new folder beside the RAW folder). Progress comes from RapidRAW's own output; Cancel
+    stops it. Returns the folder."""
+    import os
+    import subprocess
+    program = program or find_rapidraw()
+    if program is None:
+        raise ValueError("Couldn't find RapidRAW. It's usually in AppData\\Local\\RapidRAW; export from RapidRAW "
+                         "itself instead, into a new folder next to the RAW files.")
+    out = Path(out) if out else export_folder_for(seq.folder)
+    out.mkdir(parents=True, exist_ok=True)
+    command = [str(program), "export", str(seq.folder), "--output", str(out), "--format", fmt,
+               "--quality", str(int(quality))]
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
+    hook = tracker.stage("Exporting with RapidRAW") if tracker else None
+    total, done, tail = len(seq), 0, []
+    proc = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                            encoding="utf-8", errors="replace", creationflags=flags)
+    try:
+        for line in proc.stdout:
+            tail = (tail + [line.strip()])[-8:]
+            found = re.search(r"Found (\d+) images", line)
+            if found:
+                total = int(found.group(1))
+            if "processed" in line and "process_image_for_export" in line:
+                done += 1
+                if hook:
+                    hook(min(done, total), total)
+            if tracker:
+                tracker.token.check()                    # Cancel: stops RapidRAW too (below)
+        code = proc.wait()
+    except BaseException:
+        proc.kill()
+        proc.wait()
+        raise
+    if code != 0:
+        said = next((t for t in reversed(tail) if "failed" in t.lower() or "error" in t.lower()), tail[-1] if tail else "")
+        raise ValueError(f"RapidRAW's export stopped (code {code}). {said}".strip())
+    frames = [f for f in out.iterdir() if f.suffix.lower() in FRAME_SUFFIXES]
+    if len(frames) < len(seq):
+        raise ValueError(f"RapidRAW exported {len(frames)} of {len(seq)} frames into {out}.")
+    return out

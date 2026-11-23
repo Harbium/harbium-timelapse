@@ -269,3 +269,26 @@ def test_keyframes_already_labelled_in_rapidraw_are_picked_up(bare_raws):
     m = opened(bare_raws)
     m.load_keyframes()
     assert [k["frame"] for k in m.keyframes] == [0, 9, N - 1] and m.keyframes_state == "labelled"
+
+
+def test_export_with_rapidraw_goes_straight_on_to_finish(bare_raws, tmp_path, monkeypatch):
+    import sys as _sys
+    sys_path = tmp_path / "RapidRAW.exe"
+    import importlib.util
+    from pathlib import Path as _Path
+    spec = importlib.util.spec_from_file_location(
+        "rapidraw_stand_in", _Path(__file__).parent.parent / "app" / "test_rapidraw_export.py")
+    stand_in = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(stand_in)
+    FAKE = stand_in.FAKE
+    sys_path.write_text(FAKE.format(python=_sys.executable), encoding="utf-8")
+    sys_path.chmod(0o755)
+    monkeypatch.setattr(session, "find_rapidraw", lambda: sys_path)
+    m = opened(bare_raws)
+    m.choose_editor("rapidraw")
+    m.wait()
+    assert m.rapidraw_program == sys_path
+    m.export_with_rapidraw()
+    m.wait()
+    assert m.screen == "finish", m.message
+    assert m.project.export.endswith("sunset export")

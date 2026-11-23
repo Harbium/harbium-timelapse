@@ -131,9 +131,10 @@ def test_export_is_noticed_counted_and_called_complete(tmp_path):
     for i in range(10):                                 # the RAW frames: exports are named after them
         (raw / f"f{i:03d}.CR3").write_bytes(b"")
     frames_in(raw, 3)                                   # images in the RAW folder itself never count
-    since = time.time() - 1
-    assert session.export_status(raw, 10, since).state == "waiting"
-    frames_in(tmp_path / "old-export", 10, when=since - 100)       # made before: ignored
+    frames_in(tmp_path / "old-export", 10, when=time.time() - 100)  # an export that was there before...
+    time.sleep(0.05)
+    since = time.time()                                 # ...you arrived at the Grade screen: ignored
+    time.sleep(0.05)
     assert session.export_status(raw, 10, since).state == "waiting"
     frames_in(tmp_path / "final-export", 6)
     s = session.export_status(raw, 10, since)

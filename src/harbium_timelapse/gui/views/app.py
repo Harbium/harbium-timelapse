@@ -521,6 +521,15 @@ class GradeScreen(Screen):
         choose = ui.secondary("Choose folder instead", self.choose)
         if s.state == "waiting":
             self.watch.controls = [ui.text("Watching for a new export..."), choose]
+            if m.rapidraw_program is not None:
+                self.watch.controls = [
+                    ui.text("Export every frame", size=17),
+                    ui.text("RapidRAW renders each frame with your grade (JPEG, top quality) into a new folder next "
+                            "to the RAW files, then this goes straight on to Finish. About a minute for a few "
+                            "hundred frames on a good graphics card.", dim=True, size=14),
+                    ft.Row([ui.primary("Export with RapidRAW", lambda e: m.export_with_rapidraw()), choose],
+                           spacing=10),
+                    ui.text("Or export from RapidRAW yourself: this screen notices when it lands.", dim=True, size=13)]
         elif s.state == "arriving":
             total = len(m.opened.seq)
             self.watch.controls = [ui.text(f"Export arriving: {s.frames} of {total} frames"),

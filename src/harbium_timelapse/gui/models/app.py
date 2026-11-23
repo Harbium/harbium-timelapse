@@ -911,3 +911,26 @@ class AppModel:
             return thumbnail(source, 160) if source is not None and source.exists() else None
         except (OSError, IndexError, ValueError):
             return None
+
+    # --- exporting through RapidRAW's command line ------------------------------------------------------------
+
+    @property
+    def rapidraw_program(self):
+        """RapidRAW's program, if this is a RapidRAW folder and it's installed (looked up once)."""
+        if not self.keyframes_supported:
+            return None
+        if not hasattr(self, "_rapidraw_program"):
+            self._rapidraw_program = self.s.find_rapidraw()
+        return self._rapidraw_program
+
+    def export_with_rapidraw(self) -> None:
+        """Render every frame with its grade through RapidRAW, then go straight on to Finish."""
+        if self.rapidraw_program is None:
+            return
+        seq, program = self.opened.seq, self.rapidraw_program
+
+        def done(folder):
+            self._notice(f"RapidRAW exported {len(seq)} frames into {folder}.")
+            self.use_export(folder)
+        self._run("Exporting with RapidRAW",
+                  lambda t: self.s.export_with_rapidraw(seq, tracker=t, program=program), done)
