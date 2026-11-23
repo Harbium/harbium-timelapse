@@ -538,7 +538,8 @@ class SequenceView:
         if picture_height and ph > picture_height:      # never taller than the room there is
             pw, ph = round(picture_height * w / h), int(picture_height)
         self.HEIGHT = ph
-        self.picture = ft.RawImage(width=pw, height=ph)
+        self.picture = ft.RawImage(width=pw, height=ph, fit=ft.BoxFit.CONTAIN, filter_quality=ft.FilterQuality.HIGH)
+        self.sharp_when_stopped = full or pw > 700        # stopped: redraw from the full-size preview
         self.line = ft.RawImage(width=self.WIDTH, height=self.LINE_H)
         self.line_box = ft.Container(self.line, width=self.WIDTH, height=self.LINE_H, on_tap_down=self._tapped)
         self.scrub = ft.Slider(min=0, max=1, value=0, width=self.WIDTH, on_change=self._scrubbing,
@@ -633,7 +634,7 @@ class SequenceView:
                 if image is not None:
                     self._shown = key
                     await self.picture.render(image)
-                if self.full and not self.playing and m.view_mode != "flicker":
+                if self.sharp_when_stopped and not self.playing and m.view_mode != "flicker":
                     sharp = await asyncio.to_thread(src.sharp)       # stopped: the frame at full preview size
                     if sharp is not None and key == self._shown and not self.playing:
                         await self.picture.render(sharp)
@@ -1197,11 +1198,8 @@ SCREENS = {"start": StartScreen, "folder": FolderScreen, "prepare": PrepareScree
 class View:
     def __init__(self, page: ft.Page, model: AppModel):
         self.page, self.model = page, model
-        dark = page.platform_brightness != ft.Brightness.LIGHT
-        self.tokens = DARK if dark else LIGHT
-        self.ui = UI(self.tokens)
-        self.chart_theme = Theme() if dark else Theme(background=(222, 217, 206), grid=(199, 193, 181),
-                                                      text=(94, 90, 82), mark=(10, 10, 10))
+        self.dark = page.theme_mode == ft.ThemeMode.DARK
+        self._apply_theme()
         self.picker = ft.FilePicker()
         page.services.append(self.picker)
         self.screen: Screen | None = None
@@ -1210,7 +1208,34 @@ class View:
         self._build_shell()
         model.subscribe(self.refresh)
         page.on_keyboard_event = self._key
-        page.on_resized = lambda e: page.run_task(self._resized)
+        page.on_resize = lambda e: page.run_task(self._resized)
+        self.refresh()
+
+    # --- light and dark ---------------------------------------------------------------------------------
+
+    def _apply_theme(self) -> None:
+        from ..theme import CHART
+        self.tokens = DARK if self.dark else LIGHT
+        scale = getattr(getattr(self, "ui", None), "scale", 1.12)
+        self.ui = UI(self.tokens)
+        self.ui.scale = scale
+        self.chart_theme = Theme(**CHART["dark" if self.dark else "light"])
+
+    def toggle_theme(self, e=None) -> None:
+        """Light or dark: the whole window at once, remembered for next time."""
+        from ...app import config
+        self.dark = not self.dark
+        prefs = config.preferences()
+        prefs["theme"] = "dark" if self.dark else "light"
+        config.save_preferences(prefs)
+        self.page.theme_mode = ft.ThemeMode.DARK if self.dark else ft.ThemeMode.LIGHT
+        self.page.bgcolor = (DARK if self.dark else LIGHT)["bg"]
+        self._apply_theme()
+        if self.screen is not None:
+            self.screen.leave()
+        self.screen, self.screen_name = None, None
+        self.page.controls.clear()
+        self._build_shell()
         self.refresh()
 
     # --- the window's size ------------------------------------------------------------------------------
@@ -1290,7 +1315,10 @@ class View:
         self.body = ft.Container(padding=ft.Padding(32, 28, 32, 28), expand=True)
         header = ft.Container(ft.Row([ui.mark(), ft.Text("Harbium", font_family=DISPLAY, size=26, color=t["text"]),
                                       ui.text("Timelapse", dim=True, size=14), ft.Container(width=16),
-                                      self.project_name], spacing=10,
+                                      ft.Container(self.project_name, expand=True),
+                                      ft.TextButton("Light mode" if self.dark else "Dark mode",
+                                                    on_click=self.toggle_theme,
+                                                    style=ft.ButtonStyle(color=t["dim"]))], spacing=10,
                                      vertical_alignment=ft.CrossAxisAlignment.CENTER),
                               padding=ft.Padding(24, 14, 24, 14), border=ft.Border(bottom=ft.BorderSide(1, t["line"])))
         self.stage_box = ft.Container(self.stage_bar, padding=ft.Padding(20, 6, 20, 6),
@@ -1348,7 +1376,8 @@ def start(page: ft.Page) -> View:
     page.title = "Harbium Timelapse"
     page.padding = 0
     page.fonts = FONTS
-    dark = page.platform_brightness != ft.Brightness.LIGHT
+    from ...app import config
+    dark = config.preferences().get("theme") == "dark"            # light unless you chose dark
 
     def brand(t: dict) -> ft.Theme:
         # Switches, sliders, checkboxes, the presets and the dropdown all take these: bone on ink, or ink on bone.
