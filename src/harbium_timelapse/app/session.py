@@ -133,6 +133,22 @@ class ExportStatus:
     frames: int = 0
 
 
+def frame_stems(raw_folder: Path) -> set[str]:
+    """The frames' names without extensions, lower case (what exported frames are named after)."""
+    try:
+        return {p.name.split(".")[0].lower() for p in Path(raw_folder).iterdir() if p.is_file()
+                and not p.name.startswith(".") and not p.name.endswith((".rrdata", ".xmp", ".json"))}
+    except OSError:
+        return set()
+
+
+def named_after(name: str, stems: set[str]) -> bool:
+    """181A0834.jpg, or with an editor's suffix: RapidRAW writes 181A0834_edited.jpeg. Anything goes when the
+    frames' names aren't known."""
+    base = name.split(".")[0].lower()
+    return not stems or any(part in stems for part in (base, re.split(r"[_\- ]", base)[0]))
+
+
 def export_status(raw_folder: Path, expected: int, since: float, now: float | None = None) -> ExportStatus:
     """Look for a folder of exported frames near the RAW folder, made after ``since``.
 
@@ -143,16 +159,10 @@ def export_status(raw_folder: Path, expected: int, since: float, now: float | No
     now = time.time() if now is None else now
     # Only images named after the frames count (181A0834.jpg for 181A0834.CR3): a screenshot or anything
     # else landing in a folder nearby is never taken for the export.
-    try:
-        stems = {p.name.split(".")[0].lower() for p in raw_folder.iterdir() if p.is_file()
-                 and not p.name.startswith(".") and not p.name.endswith((".rrdata", ".xmp", ".json"))}
-    except OSError:
-        stems = set()
+    stems = frame_stems(raw_folder)
 
     def named_after_a_frame(name: str) -> bool:
-        # 181A0834.jpg, or with an editor's suffix: RapidRAW writes 181A0834_edited.jpeg
-        base = name.split(".")[0].lower()
-        return not stems or any(part in stems for part in (base, re.split(r"[_\- ]", base)[0]))
+        return named_after(name, stems)
     candidates = []
     for parent in (raw_folder, raw_folder.parent):
         try:
@@ -420,7 +430,8 @@ def export_folder_for(raw_folder: Path) -> Path:
 
 
 def export_with_rapidraw(seq: Sequence, out: Path | None = None, fmt: str = "jpeg", quality: int = 95,
-                         tracker: Tracker | None = None, program: Path | None = None) -> Path:
+                         tracker: Tracker | None = None, program: Path | None = None,
+                         replace: bool = False) -> Path:
     """Render every frame with its RapidRAW edit, through RapidRAW's command-line export (RapidRAW 1.6+), into
     ``out`` (default: a new folder beside the RAW folder). Progress comes from RapidRAW's own output; Cancel
     stops it. Returns the folder."""
@@ -432,10 +443,17 @@ def export_with_rapidraw(seq: Sequence, out: Path | None = None, fmt: str = "jpe
                          "itself instead, into a new folder next to the RAW files.")
     out = Path(out) if out else export_folder_for(seq.folder)
     out.mkdir(parents=True, exist_ok=True)
+    if replace:
+        # Exporting again into the same folder: the old frames go first (only images named after the frames:
+        # nothing else in the folder is touched), so old and new can never mix.
+        stems = frame_stems(seq.folder)
+        for f in out.iterdir():
+            if f.is_file() and f.suffix.lower() in FRAME_SUFFIXES and stems and named_after(f.name, stems):
+                f.unlink()
     command = [str(program), "export", str(seq.folder), "--output", str(out), "--format", fmt,
                "--quality", str(int(quality))]
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
-    hook = tracker.stage("Exporting with RapidRAW") if tracker else None
+    hook = tracker.stage("Frames") if tracker else None
     total, done, tail = len(seq), 0, []
     proc = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
                             encoding="utf-8", errors="replace", creationflags=flags)
@@ -463,3 +481,22 @@ def export_with_rapidraw(seq: Sequence, out: Path | None = None, fmt: str = "jpe
     if len(frames) < len(seq):
         raise ValueError(f"RapidRAW exported {len(frames)} of {len(seq)} frames into {out}.")
     return out
+
+
+def frames_off_the_blend(editor: Editor, seq: Sequence) -> list:
+    """Frames whose edit no longer matches the blend between the labelled keyframes (keyframes edited since the
+    last blend), with the settings that differ. Empty with fewer than two keyframes."""
+    from ..editors.rapidraw.keyframes import frames_off_the_blend as off
+    from ..editors.rapidraw.sidecar import read_sidecar
+    if editor is None or editor.name != "rapidraw":
+        return []
+    try:
+        found = off(seq)
+    except ValueError:
+        return []
+    listed = {name for name, _ in found}
+    # A frame with no edit file hasn't been blended at all (it isn't "matching" an empty blend).
+    return found + [(f.name, [NOT_BLENDED]) for f in seq if f.name not in listed and read_sidecar(f.path) is None]
+
+
+NOT_BLENDED = "(no edit file yet)"

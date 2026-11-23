@@ -427,6 +427,8 @@ class KeyframesPanel:
         self.screen, self.m, self.ui = screen, screen.m, screen.ui
         self.body = ft.Column(spacing=8)
         self.pick = 0                                   # the frame the slider points at
+        self.m.load_keyframes()                         # however you got here: your labelled keyframes, and
+                                                        # whether the frames between them still match the blend
 
     def control(self):
         return ft.Container(self.ui.panel(self.body), padding=ft.Padding(0, 8, 0, 8))
@@ -477,7 +479,9 @@ class KeyframesPanel:
             rows.append(ft.Row([ui.primary("Label them purple in RapidRAW", lambda e: m.label_keyframes()),
                                 ui.secondary("Suggest again", lambda e: m.suggest_keyframes())], spacing=10))
         elif state == "labelled":
-            rows.append(ui.text("Grade just the purple frames in RapidRAW (filter by purple), close RapidRAW, "
+            stale = m.keyframes_out_of_date
+            rows.append(ui.text(stale + " Blend again before exporting." if stale else
+                                "Grade just the purple frames in RapidRAW (filter by purple), close RapidRAW, "
                                 "then blend.", size=14))
             rows.append(ft.Row([ui.primary("Blend between keyframes", lambda e: m.blend_keyframes())]))
         elif state == "blended":
@@ -541,7 +545,14 @@ class GradeScreen(Screen):
                                    ui.text(str(s.folder), dim=True, mono=True, size=13),
                                    ui.text("All there and nothing changing for a few seconds, so the export "
                                            "looks complete.", dim=True, size=14),
-                                   ft.Row([ui.primary("Finish now", lambda e: m.use_export()), choose])]
+                                   ft.Row([ui.primary("Finish now", lambda e: m.use_export()),
+                                           *([ui.secondary("Export again with RapidRAW",
+                                                           lambda e: m.export_with_rapidraw(replace=True))]
+                                             if m.rapidraw_program is not None else []),
+                                           choose], spacing=10, wrap=True),
+                                   *([ui.text("Blended again since? Export again replaces these frames with "
+                                              "fresh ones (nothing else in the folder is touched).", dim=True,
+                                              size=13)] if m.rapidraw_program is not None else [])]
 
     async def poll(self):
         while self._polling:

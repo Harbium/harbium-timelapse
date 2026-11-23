@@ -12,6 +12,8 @@ quick stand-ins where real RAW decoding isn't possible.
 
 from __future__ import annotations
 
+import re
+
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -835,13 +837,42 @@ class AppModel:
         return self.opened is not None and self.opened.editor is not None and self.opened.editor.name == "rapidraw"
 
     def load_keyframes(self) -> None:
-        """Pick up keyframes already labelled in RapidRAW (quick: reads the edit files)."""
-        if not self.keyframes_supported or self.keyframes is not None:
+        """Pick up the keyframes labelled in RapidRAW, and whether the frames between them still match the blend
+        (quick: reads the edit files). A list you're still choosing is left alone."""
+        if not self.keyframes_supported or self.keyframes_state == "chosen":
             return
         found = self.s.keyframes_now(self.opened.editor, self.opened.seq)
-        if found:
-            self.keyframes = [{"frame": i, "reason": "labelled in RapidRAW"} for i in found]
-            self.keyframes_state = "labelled"
+        if not found:
+            return
+        reasons = {k["frame"]: k["reason"] for k in (self.keyframes or [])}
+        self.keyframes = [{"frame": i, "reason": reasons.get(i, "labelled in RapidRAW")} for i in found]
+        self._check_blend()
+
+    def _check_blend(self) -> None:
+        """Blended only if every frame has an edit file and matches the blend. Frames without one simply haven't
+        been blended yet (not a change since the last blend, so no warning)."""
+        from ...editors.rapidraw.sidecar import read_sidecar
+        seq = self.opened.seq
+        off = self.s.frames_off_the_blend(self.opened.editor, seq) if len(self.keyframes or []) >= 2 else []
+        keys = {k["frame"] for k in self.keyframes or []}
+        unblended = any(read_sidecar(f.path) is None for i, f in enumerate(seq) if i not in keys)
+        self.keyframes_off = [] if unblended else off
+        self.keyframes_state = "labelled" if (off or unblended or len(keys) < 2) else "blended"
+
+    @property
+    def keyframes_out_of_date(self) -> str:
+        """Plain words for frames that no longer match the blend (keyframes edited since), or ""."""
+        off = getattr(self, "keyframes_off", [])
+        if not off or self.keyframes_state != "labelled":
+            return ""
+        settings = sorted({name for _, names in off for name in names if name != self.s.NOT_BLENDED})
+        if not settings:
+            return ""                                    # simply not blended yet: not out of date
+        off = [o for o in off if o[1] != [self.s.NOT_BLENDED]]
+        words = ", ".join(re.sub(r"(?<!^)([A-Z])", r" \1", s).lower() for s in settings[:4])
+        more = f" and {len(settings) - 4} more" if len(settings) > 4 else ""
+        return (f"{len(off)} frames don't match the blend between your keyframes ({words}{more}): the keyframes "
+                "changed since the last blend.")
 
     def suggest_keyframes(self) -> None:
         if not self.keyframes_supported:
@@ -893,6 +924,7 @@ class AppModel:
 
         def done(result):
             self.keyframes_state = "blended"
+            self.keyframes_off, self._export_warned = [], False
             held = ""
             if result.held:
                 held = (" Couldn't blend, so they change at each keyframe: "
@@ -923,14 +955,25 @@ class AppModel:
             self._rapidraw_program = self.s.find_rapidraw()
         return self._rapidraw_program
 
-    def export_with_rapidraw(self) -> None:
-        """Render every frame with its grade through RapidRAW, then go straight on to Finish."""
+    def export_with_rapidraw(self, replace: bool = False) -> None:
+        """Render every frame with its grade through RapidRAW, then go straight on to Finish. ``replace``: into
+        the export already found, its old frames removed first (after blending again, say)."""
         if self.rapidraw_program is None:
             return
+        self.load_keyframes()
+        stale = self.keyframes_out_of_date
+        if stale and not getattr(self, "_export_warned", False):
+            self._export_warned = True
+            self._notice(stale + " Blend again first, or press Export with RapidRAW again to export as they are.",
+                         "error")
+            self.changed()
+            return
         seq, program = self.opened.seq, self.rapidraw_program
+        target = self.export.folder if replace and self.export is not None and self.export.folder else None
 
         def done(folder):
             self._notice(f"RapidRAW exported {len(seq)} frames into {folder}.")
             self.use_export(folder)
         self._run("Exporting with RapidRAW",
-                  lambda t: self.s.export_with_rapidraw(seq, tracker=t, program=program), done)
+                  lambda t: self.s.export_with_rapidraw(seq, out=target, tracker=t, program=program,
+                                                        replace=target is not None), done)

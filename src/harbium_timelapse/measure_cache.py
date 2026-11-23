@@ -41,7 +41,9 @@ def key(paths: list[Path], kind: str, extra: str = "") -> str | None:
             st = Path(p).stat()
         except OSError:
             return None
-        h.update(f"|{Path(p).resolve()}|{st.st_size}|{st.st_mtime_ns}".encode())
+        # Creation (or change) time too: RapidRAW's export keeps the photo's own date, so a frame exported again
+        # has the same name and modified time, and possibly the same size.
+        h.update(f"|{Path(p).resolve()}|{st.st_size}|{st.st_mtime_ns}|{st.st_ctime_ns}".encode())
     return h.hexdigest()[:32]
 
 

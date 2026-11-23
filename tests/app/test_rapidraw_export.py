@@ -62,7 +62,7 @@ def test_rapidraw_exports_every_frame_beside_the_raw_folder(tmp_path, fake_rapid
     steps = Steps()
     out = session.export_with_rapidraw(seq, tracker=steps, program=fake_rapidraw)
     assert out == tmp_path / "sunset export" and len(list(out.glob("*_edited.jpeg"))) == 6
-    assert steps.seen[-1] == ("Exporting with RapidRAW", 6, 6)                # progress from RapidRAW's own lines
+    assert steps.seen[-1] == ("Frames", 6, 6)                                 # progress from RapidRAW's own lines
     assert session.export_with_rapidraw(seq, program=fake_rapidraw) == tmp_path / "sunset export 2"   # never mixed
 
 
@@ -79,3 +79,17 @@ def test_the_watcher_spots_rapidraw_style_files_with_their_old_dates(tmp_path, f
     out = session.export_with_rapidraw(seq, program=fake_rapidraw)
     s = session.export_status(seq.folder, 6, since)
     assert (s.state, s.folder, s.frames) == ("arriving", out, 6)
+
+
+def test_exporting_again_replaces_the_frames_and_nothing_else(tmp_path, fake_rapidraw):
+    """After blending again: the old frames go, fresh ones arrive in the same folder, other files stay."""
+    seq = raws(tmp_path / "sunset")
+    out = session.export_with_rapidraw(seq, program=fake_rapidraw)
+    (out / "notes.txt").write_text("mine")
+    (out / "poster.jpg").write_bytes(b"not a frame")
+    stale = out / "181A0834_edited.jpeg"
+    stale.write_bytes(b"old grade")
+    again = session.export_with_rapidraw(seq, out=out, program=fake_rapidraw, replace=True)
+    assert again == out and len(list(out.glob("*_edited.jpeg"))) == 6
+    assert stale.read_bytes() == b"jpeg"                                    # the fresh frame, not the old one
+    assert (out / "notes.txt").read_text() == "mine" and (out / "poster.jpg").exists()

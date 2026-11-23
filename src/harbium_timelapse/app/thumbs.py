@@ -25,7 +25,8 @@ def _folder() -> Path:
 def thumbnail(path: Path, width: int = WIDTH) -> Path:
     path = Path(path)
     st = path.stat()
-    key = hashlib.sha256(f"{path.resolve()}|{st.st_size}|{st.st_mtime_ns}|{width}".encode()).hexdigest()[:24]
+    key = hashlib.sha256(f"{path.resolve()}|{st.st_size}|{st.st_mtime_ns}|{st.st_ctime_ns}|{width}"
+                         .encode()).hexdigest()[:24]               # ctime: re-exported frames keep their dates
     target = _folder() / f"{key}.jpg"
     if target.exists():
         return target

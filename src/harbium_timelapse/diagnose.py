@@ -218,6 +218,9 @@ def check_tones_after(rec: Recorder, tone) -> Finding:
             # big relative change at levels of 1-3 out of 255, and a middle value of per-pixel stops read it as
             # flicker (James's sunset: shadows "0.132 -> 0.211" while the film's shadows wobbled 0.014-0.026).
             level = lambda x: np.log2(np.mean(2.0 ** x[:, mask], axis=1))     # noqa: E731
+            if float(np.mean(2.0 ** a[:, mask])) < 0.002:     # about 0-8 of 255: too little light to measure
+                words.append(f"{name} too dark to judge")
+                continue
             words.append(f"{name} {jitter(level(b)):.3f} → {jitter(level(a)):.3f}")
     return Finding("ok", "Tones: corrected level by level",
                    tone.describe() + (" Wobble per level (stops), before → after: " + ", ".join(words) + "."

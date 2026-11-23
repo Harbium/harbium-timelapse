@@ -292,3 +292,57 @@ def test_export_with_rapidraw_goes_straight_on_to_finish(bare_raws, tmp_path, mo
     m.wait()
     assert m.screen == "finish", m.message
     assert m.project.export.endswith("sunset export")
+
+
+def test_keyframes_edited_after_blending_are_caught_before_exporting(bare_raws, tmp_path, monkeypatch):
+    """Regression: glow and halation removed from every keyframe still showed in the export: the frames between
+    them held the previous blend, and the Grade screen had forgotten the keyframes, so nothing said so."""
+    import importlib.util
+    import sys as _sys
+    from pathlib import Path as _Path
+    from harbium_timelapse.editors.rapidraw.sidecar import read_sidecar, write_sidecar
+    spec = importlib.util.spec_from_file_location(
+        "rapidraw_stand_in", _Path(__file__).parent.parent / "app" / "test_rapidraw_export.py")
+    stand_in = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(stand_in)
+    program = tmp_path / "RapidRAW.exe"
+    program.write_text(stand_in.FAKE.format(python=_sys.executable), encoding="utf-8")
+    program.chmod(0o755)
+    monkeypatch.setattr(session, "find_rapidraw", lambda: program)
+
+    m = opened(bare_raws)
+    m.choose_editor("rapidraw")
+    m.wait()
+    for f in (0, N - 1):
+        m.add_keyframe(f)
+    m.label_keyframes()
+    m.wait()
+    seq = m.opened.seq
+    for f in (0, N - 1):                                   # graded with glow, then blended
+        data = read_sidecar(seq[f].path)
+        data["adjustments"] = {"glowAmount": 40, "halationAmount": 25}
+        write_sidecar(seq[f].path, data)
+    m.blend_keyframes()
+    m.wait()
+    assert m.keyframes_state == "blended"
+    for f in (0, N - 1):                                   # glow and halation taken off the keyframes...
+        data = read_sidecar(seq[f].path)
+        data["adjustments"].update(glowAmount=0, halationAmount=0)
+        write_sidecar(seq[f].path, data)
+
+    fresh = AppModel(services=m.s)                         # ...and back to the app later
+    fresh.open_folder(bare_raws)
+    fresh.wait()
+    fresh.load_keyframes()
+    assert [k["frame"] for k in fresh.keyframes] == [0, N - 1] and fresh.keyframes_state == "labelled"
+    assert "glow amount" in fresh.keyframes_out_of_date and "halation amount" in fresh.keyframes_out_of_date
+    fresh.screen = "grade"
+    fresh.export_with_rapidraw()                           # first press: a warning, nothing exported
+    assert fresh.screen == "grade" and "Blend again first" in fresh.message
+    fresh.blend_keyframes()
+    fresh.wait()
+    assert fresh.keyframes_state == "blended" and not fresh.keyframes_out_of_date
+    assert read_sidecar(seq[5].path)["adjustments"]["glowAmount"] == 0   # the frames between follow again
+    fresh.export_with_rapidraw()
+    fresh.wait()
+    assert fresh.screen == "finish", fresh.message
