@@ -359,7 +359,7 @@ class PrepareScreen(Screen):
 
     def build(self):
         ui, m = self.ui, self.m
-        self.timeline = ft.RawImage(width=self.WIDTH, height=self.HEIGHT)
+        self.seq = SequenceView(self, keyframes=False)
         self.summary = ui.text("", dim=True, size=14)
         self.notes = ft.Column(spacing=4)
         self.apply_btn = ui.primary("Apply corrections", lambda e: m.apply())
@@ -372,7 +372,7 @@ class PrepareScreen(Screen):
         if m.white_balance_available:
             side.append(ft.Switch(label="Steady the camera's auto white balance", value=m.white_balance,
                                   on_change=lambda e: m.set_white_balance(e.control.value)))
-        side += [ui.text("Smoothness", size=14),
+        side += [ui.text("Smoothness: play the sequence and drag this to see what it does", size=14),
                  ft.Row([ui.text("Steady", dim=True, size=13), self.slider, ui.text("Follows\nthe light", dim=True,
                                                                                        size=13)], spacing=4)]
         if m.needs_metadata_saved:
@@ -390,8 +390,9 @@ class PrepareScreen(Screen):
                                       "smoothly. A rough guide from the RAW files, before your grade.")
         self.slice.refresh()
         return ft.Row([ft.Column(side, spacing=12, width=380),
-                       ft.Column([ui.panel(ft.Column([ui.text("Brightness (stops): measured, and the smoothing curve",
-                                                              dim=True, size=13), self.timeline], spacing=8),
+                       ft.Column([ui.panel(ft.Column([ui.text("Your sequence as the corrections will leave it; below, "
+                                                              "the light (stops): measured, and the smoothing curve",
+                                                              dim=True, size=13), self.seq.control()], spacing=8),
                                            padding=12), self.slice.control()], spacing=16)],
                       spacing=28, vertical_alignment=ft.CrossAxisAlignment.START, wrap=True)
 
@@ -402,22 +403,16 @@ class PrepareScreen(Screen):
         self.apply_btn.disabled = not m.can_apply
         self.state.value = ("Measuring your RAW files..." if m.measured is None
                             else "Updating..." if m.previewing else "")
-        if m.preview is not None and m.preview is not self._drawn:
-            self._drawn = m.preview
-            self.view.page.run_task(self.draw)
+        if getattr(self, "seq", None):
+            self.seq.refresh()
         if hasattr(self, "slice"):
             self.slice.refresh()
 
-    async def draw(self):
-        series = self.m.prepare_series
-        if series is None:
-            return
-        measured, curve = series
-        t = self.ui.t
-        img = await asyncio.to_thread(render_timeline,
-                                      [Series(measured, t["measured"], 1), Series(curve, t["curve"], 3)],
-                                      self.WIDTH, self.HEIGHT, self.view.chart_theme, steps=self.m.exposure_steps)
-        await self.timeline.render(img)
+    def on_key(self, e):
+        self.seq.on_key(e)
+
+    def leave(self):
+        self.seq.playing = False
 
 
 class SequenceView:
@@ -430,8 +425,9 @@ class SequenceView:
     FPS = 24
     LOOP = 12                                           # frames either side of the playhead when looping
 
-    def __init__(self, screen):
+    def __init__(self, screen, keyframes: bool = True):
         self.screen, self.m, self.ui = screen, screen.m, screen.ui
+        self.with_keyframes = keyframes                 # Grade: keyframes on; Prepare: the corrections only
         w, h = self.m.view.size if self.m.view is not None else (3, 2)
         self.HEIGHT = round(self.WIDTH * h / w)
         self.picture = ft.RawImage(width=self.WIDTH, height=self.HEIGHT)
@@ -452,13 +448,16 @@ class SequenceView:
             self.line_box,
             ft.Row([self.label], alignment=ft.MainAxisAlignment.START),
             self.controls,
-            ui.text("Space plays, the arrow keys step a frame (with Shift, ten), K adds or removes a keyframe. "
-                    "These are the RAW files with Prepare's corrections: your RapidRAW grade isn't in them.",
+            ui.text("Space plays, the arrow keys step a frame (with Shift, ten)"
+                    + (", K adds or removes a keyframe" if self.with_keyframes else "")
+                    + ". These are the RAW files with Prepare's corrections: your grade isn't in them.",
                     dim=True, size=12)], spacing=8), width=self.WIDTH)
 
     # --- drawing -----------------------------------------------------------------------------------------
 
     def _keys(self):
+        if not self.with_keyframes:
+            return (), ()
         keys = tuple(k["frame"] for k in (self.m.keyframes or []))
         return ((), keys) if self.m.keyframes_state == "chosen" else (keys, ())
 
@@ -481,7 +480,7 @@ class SequenceView:
         m.load_view()
         self.status.value = m.view_status
         self.status.visible = bool(m.view_status)
-        keys = [k["frame"] for k in (m.keyframes or [])]
+        keys = [k["frame"] for k in (m.keyframes or [])] if self.with_keyframes else []
         here = m.cursor in keys
         self.label.value = (f"{seq[m.cursor].name}  ·  frame {m.cursor + 1} of {len(seq)}"
                             + ("  ·  keyframe" if here else ""))
@@ -492,9 +491,10 @@ class SequenceView:
         self.controls.controls = [
             ui.primary("Pause" if self.playing else "Play", lambda e: self.play()),
             ui.secondary("Loop: on" if self.loop else "Loop: off", lambda e: self._loop()),
-            mode_button("after", "After"), mode_button("before", "Before"), mode_button("wipe", "Wipe"),
-            ui.secondary("Remove keyframe (K)" if here else "Add keyframe here (K)",
-                         lambda e: self._toggle_key())]
+            mode_button("after", "After"), mode_button("before", "Before"), mode_button("wipe", "Wipe")]
+        if self.with_keyframes:
+            self.controls.controls.append(ui.secondary("Remove keyframe (K)" if here else "Add keyframe here (K)",
+                                                       lambda e: self._toggle_key()))
         if m.view_mode == "wipe":
             self.controls.controls.append(ft.Slider(min=0, max=1, value=m.wipe, width=200,
                                                     on_change=self._wiped, active_color=ui.t["text"]))
@@ -504,7 +504,7 @@ class SequenceView:
         if self.screen.view is None:
             return
         m = self.m
-        key = (m.cursor, m.view_mode, round(m.wipe, 3), id(m.view))
+        key = (m.cursor, m.view_mode, round(m.wipe, 3), id(m.view), id(m.prepare_series))   # corrections too
         line_key = (m.cursor, self._keys(), id(m.prepare_series), id(m.measured))
 
         async def draw():
@@ -563,7 +563,7 @@ class SequenceView:
         elif key in ("arrow left", "arrow right"):
             self.playing = False
             self.go(self.m.cursor + (1 if key == "arrow right" else -1) * (10 if e.shift else 1))
-        elif key == "k":
+        elif key == "k" and self.with_keyframes:
             self._toggle_key()
 
     def play(self) -> None:

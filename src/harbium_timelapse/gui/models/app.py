@@ -458,6 +458,7 @@ class AppModel:
         self.previewing = False
         if isinstance(event, Done):
             self.preview = event.result
+            self._view_gains()                 # the viewer's After follows the smoothness slider straight away
         elif isinstance(event, Failed):
             self._notice(event.message, "error")
         if self._preview_wanted is not None:

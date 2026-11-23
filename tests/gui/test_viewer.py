@@ -79,3 +79,15 @@ def test_a_click_on_the_diamonds_snaps_to_the_nearest_keyframe(panel):
     view._tapped(at(90, 60))                                    # on the curve: exactly that frame
     assert m.cursor == 90
     assert view.line_image().shape == (view.LINE_H, view.WIDTH, 3)
+
+
+def test_on_prepare_there_are_no_keyframe_controls(panel):
+    from harbium_timelapse.gui.views.app import SequenceView
+    view, m, calls = panel
+    plain = SequenceView(view.screen, keyframes=False)
+    plain.control()
+    plain.refresh()
+    words = [getattr(c, "content", "") for c in plain.controls.controls]
+    assert not any("keyframe" in str(w).lower() for w in words)
+    plain.on_key(types.SimpleNamespace(key="K", shift=False))
+    assert calls == [] and plain._keys() == ((), ())

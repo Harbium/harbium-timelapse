@@ -365,3 +365,22 @@ def test_the_viewer_loads_from_previews_and_follows_the_playhead(bare_raws, monk
     assert [k["frame"] for k in m.keyframes] == [4]
     m.toggle_keyframe_here()
     assert m.keyframes == []
+
+
+def test_on_prepare_the_viewer_follows_the_smoothness_slider(folder, monkeypatch):
+    from harbium_timelapse import previews
+    monkeypatch.setattr(previews, "load_small", lambda path, longest: np.full((40, 60, 3), 0.1))
+    monkeypatch.setattr(session, "ensure_previews", lambda seq, tracker=None: 0)   # stand-ins have no previews
+    m = opened(folder)
+    m.go("prepare")
+    m.wait()
+    until(lambda: m.preview is not None and not m.previewing)
+    m.load_view()
+    until(lambda: m.view is not None)
+    measured, curve = m.prepare_series
+    assert np.allclose(m.view.gains, curve - measured)                # After = the preview's corrections
+    before = m.view.gains.copy()
+    m.set_window(7)                                                    # drag Smoothness towards "follows the light"
+    until(lambda: m.preview is not None and not m.previewing and not np.allclose(m.view.gains, before))
+    measured, curve = m.prepare_series
+    assert np.allclose(m.view.gains, curve - measured)                 # ...and After follows at once
