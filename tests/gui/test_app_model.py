@@ -201,6 +201,71 @@ def test_raw_files_without_edit_files_explain_what_to_do(tmp_path):
     m.open_folder(raw)
     m.wait()
     target, label = m.next_step
-    assert m.raw_without_edits and label == "Open these in your editor first" and not m.can_go(target)
+    assert m.raw_without_edits and label == "Choose your editor first" and not m.can_go(target)
+    card = m.problems[0]                                   # never sent to Finish with RAW files
+    assert card["serious"] and card.get("choose_editor") and "Save Metadata to Files" in card["fix"]
+
+
+# --- keyframes in the app (RapidRAW) ------------------------------------------------------------------------
+
+@pytest.fixture
+def bare_raws(tmp_path, monkeypatch):
+    """RAW files with no edit files at all, as RapidRAW 1.6.3+ leaves an unedited folder."""
+    from harbium_timelapse.editors.rapidraw import adapter as rr_adapter
+    raw = tmp_path / "sunset"
+    raw.mkdir()
+    for i in range(N):
+        (raw / f"181A{834 + i:04d}.CR3").write_bytes(b"")
+    monkeypatch.setattr(rr_adapter, "rapidraw_running", lambda: False)
+    monkeypatch.setattr(session, "ensure_previews", lambda seq, tracker=None: 0)   # stand-ins have no previews
+    return raw
+
+
+def test_a_raw_folder_with_no_edit_files_asks_for_the_editor_then_opens_with_it(bare_raws):
+    m = opened(bare_raws)
     card = m.problems[0]
-    assert card["serious"] and "Save Metadata to Files" in card["fix"] and ".rrdata" in card["fix"]
+    assert card.get("choose_editor") and m.next_step[1] == "Choose your editor first"
+    m.choose_editor("rapidraw")
+    m.wait()
+    assert m.opened.editor is not None and m.opened.editor.name == "rapidraw"
+    assert m.next_step == ("prepare", "Next: preview corrections") and m.can_go("prepare")
+    assert not any(c["serious"] for c in m.problems)                 # missing files are a note, not a stop
+
+
+def test_keyframes_suggest_adjust_label_and_blend_from_the_app(bare_raws):
+    from harbium_timelapse.editors.rapidraw.sidecar import read_sidecar
+    m = opened(bare_raws)
+    m.choose_editor("rapidraw")
+    m.wait()
+    m.suggest_keyframes()
+    m.wait()
+    assert m.keyframes and m.keyframes_state == "chosen"
+    assert m.keyframes[0]["frame"] == 0 and m.keyframes[-1]["frame"] == N - 1     # first and last at least
+    m.add_keyframe(7)
+    m.remove_keyframe(N - 1)
+    m.add_keyframe(N - 1)
+    chosen = [k["frame"] for k in m.keyframes]
+    assert 7 in chosen
+    m.label_keyframes()
+    m.wait()
+    assert m.keyframes_state == "labelled", m.message
+    seq = m.opened.seq
+    purple = [i for i, f in enumerate(seq) if "color:purple" in ((read_sidecar(f.path) or {}).get("tags") or [])]
+    assert purple == chosen                                           # exactly the chosen frames
+    m.blend_keyframes()
+    m.wait()
+    assert m.keyframes_state == "blended", m.message
+    assert all(read_sidecar(f.path) is not None for f in seq)          # every frame has an edit file now
+    m.remove_keyframe(7)                                               # change of mind: unlabel it
+    m.label_keyframes()
+    m.wait()
+    assert "color:purple" not in (read_sidecar(seq[7].path).get("tags") or [])
+
+
+def test_keyframes_already_labelled_in_rapidraw_are_picked_up(bare_raws):
+    from harbium_timelapse.editors.rapidraw.keyframes import label_keyframes
+    from harbium_timelapse.sequencer import load_sequence
+    label_keyframes(load_sequence(bare_raws), [0, 9, N - 1])
+    m = opened(bare_raws)
+    m.load_keyframes()
+    assert [k["frame"] for k in m.keyframes] == [0, 9, N - 1] and m.keyframes_state == "labelled"

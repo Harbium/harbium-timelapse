@@ -331,3 +331,26 @@ def fill_missing(seq: Sequence) -> int:
             note_created(seq.folder, sidecar_path(f.path))
             created += 1
     return created
+
+
+def set_keyframes(seq: Sequence, frames: list[int], label: str = KEYFRAME_LABEL) -> tuple[int, int]:
+    """Make the keyframe labels match ``frames`` exactly: those get the label (an edit file is created where
+    there's none), every other frame loses it. A file that existed only to hold the label (no settings, no
+    rating, no other tags) is removed again. Returns (labelled, unlabelled)."""
+    from .sidecar import sidecar_path
+    wanted = set(frames)
+    label_keyframes(seq, sorted(wanted), label)
+    unlabelled = 0
+    for i, f in enumerate(seq):
+        if i in wanted:
+            continue
+        data = read_sidecar(f.path)
+        if data is None or label not in (data.get("tags") or []):
+            continue
+        data["tags"] = [t for t in data["tags"] if t != label]
+        if not data["tags"] and not data.get("rating") and not (data.get("adjustments") or {}):
+            sidecar_path(f.path).unlink()                    # only ever held the label
+        else:
+            write_sidecar(f.path, data)
+        unlabelled += 1
+    return len(wanted), unlabelled

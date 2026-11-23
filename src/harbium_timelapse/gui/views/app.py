@@ -326,6 +326,11 @@ class FolderScreen(Screen):
                                 width=20, height=20, border_radius=10, bgcolor=ui.t["text"],
                                 alignment=ft.Alignment.CENTER)
             body = [ui.text(p["message"])] + ([ui.text(p["fix"], dim=True, size=14)] if p["fix"] else [])
+            if p.get("choose_editor"):
+                body.append(ft.Container(ft.Row([
+                    ui.primary("Grade in RapidRAW", lambda e: m.choose_editor("rapidraw")),
+                    ui.secondary("Grade in Lightroom", lambda e: m.choose_editor("lightroom"))], spacing=10),
+                    padding=ft.Padding(0, 8, 0, 0)))
             if p.get("details"):
                 listing = ft.Column([ui.text(d, dim=True, size=13) for d in p["details"]], spacing=2, visible=False)
                 def toggle(e, box=listing):
@@ -415,6 +420,73 @@ class PrepareScreen(Screen):
         await self.timeline.render(img)
 
 
+class KeyframesPanel:
+    """Keyframes on the Grade screen: suggest, adjust, label purple in RapidRAW, then blend."""
+
+    def __init__(self, screen):
+        self.screen, self.m, self.ui = screen, screen.m, screen.ui
+        self.body = ft.Column(spacing=8)
+        self.pick = 0                                   # the frame the slider points at
+
+    def control(self):
+        return ft.Container(self.ui.panel(self.body), padding=ft.Padding(0, 8, 0, 8))
+
+    def _thumb(self, frame: int, width: int, height: int):
+        path = self.m.keyframe_thumb(frame)
+        if path is None:
+            return ft.Container(width=width, height=height, bgcolor=self.ui.t["line"], border_radius=2)
+        return ft.Image(src=_image_bytes(path), width=width, height=height, fit=ft.BoxFit.COVER, border_radius=2)
+
+    def refresh(self):
+        ui, m = self.ui, self.m
+        seq = m.opened.seq
+        keys, state = m.keyframes or [], m.keyframes_state
+        rows = [ui.text("Keyframes", size=17),
+                ui.text("Grade a few frames and the app carries every setting smoothly through all the frames "
+                        "between them.", dim=True, size=14)]
+        if not keys:
+            rows.append(ft.Row([ui.primary("Suggest keyframes", lambda e: m.suggest_keyframes())]))
+            self.body.controls = rows
+            return
+        for k in keys:
+            rows.append(ft.Row([
+                self._thumb(k["frame"], 72, 48),
+                ft.Column([ui.text(f"{seq[k['frame']].name}  (frame {k['frame'] + 1})", size=14),
+                           ui.text(k["reason"], dim=True, size=13)], spacing=0, expand=True),
+                ft.TextButton("Remove", on_click=lambda e, f=k["frame"]: m.remove_keyframe(f),
+                              style=ft.ButtonStyle(color=ui.t["dim"]))], spacing=10))
+        self.pick = min(self.pick, len(seq) - 1)
+        name = ui.text(f"{seq[self.pick].name}  (frame {self.pick + 1})", size=13, dim=True)
+        thumb = ft.Container(self._thumb(self.pick, 96, 64))
+
+        def moved(e):
+            self.pick = int(round(float(e.control.value)))
+            name.value = f"{seq[self.pick].name}  (frame {self.pick + 1})"
+            self.screen.view.page.update()
+
+        def settled(e):                                # the thumbnail once the slider stops: keeps dragging light
+            thumb.content = self._thumb(self.pick, 96, 64)
+            self.screen.view.page.update()
+
+        rows.append(ft.Row([thumb, ft.Column([
+            ft.Slider(min=0, max=max(1, len(seq) - 1), divisions=max(1, len(seq) - 1), value=self.pick,
+                      on_change=moved, on_change_end=settled, active_color=ui.t["text"]),
+            ft.Row([name, ui.secondary("Add this frame", lambda e: m.add_keyframe(self.pick))],
+                   alignment=ft.MainAxisAlignment.SPACE_BETWEEN)], spacing=0, expand=True)], spacing=10))
+        if state == "chosen":
+            rows.append(ft.Row([ui.primary("Label them purple in RapidRAW", lambda e: m.label_keyframes()),
+                                ui.secondary("Suggest again", lambda e: m.suggest_keyframes())], spacing=10))
+        elif state == "labelled":
+            rows.append(ui.text("Grade just the purple frames in RapidRAW (filter by purple), close RapidRAW, "
+                                "then blend.", size=14))
+            rows.append(ft.Row([ui.primary("Blend between keyframes", lambda e: m.blend_keyframes())]))
+        elif state == "blended":
+            rows.append(ui.text("Blended. Check a few frames in RapidRAW, then export every frame. Changed a "
+                                "keyframe's grade? Blend again.", size=14))
+            rows.append(ft.Row([ui.secondary("Blend again", lambda e: m.blend_keyframes())]))
+        self.body.controls = rows
+
+
 class GradeScreen(Screen):
     def build(self):
         ui, m = self.ui, self.m
@@ -428,9 +500,13 @@ class GradeScreen(Screen):
         self.slice = SlicePanel(self, "What the applied corrections do to the light, from the RAW files (your "
                                       "grade isn't in it). After should fade smoothly from band to band.")
         self.slice.refresh()
+        self.keys = KeyframesPanel(self) if m.keyframes_supported else None
+        if self.keys:
+            self.keys.refresh()
         return ft.Row([ft.Column([ui.title(f"Over to {editor}."),
                                   ui.text("Grade the sequence however you like, then export every frame. "
                                           "This screen notices when the export lands.", dim=True, size=14),
+                                  *([self.keys.control()] if self.keys else []),
                                   *steps], spacing=8, width=420),
                        ft.Column([ft.Container(ui.panel(self.watch), width=440), self.slice.control()], spacing=16)],
                       spacing=32, vertical_alignment=ft.CrossAxisAlignment.START, wrap=True)
@@ -439,6 +515,8 @@ class GradeScreen(Screen):
         ui, m = self.ui, self.m
         if hasattr(self, "slice"):
             self.slice.refresh()
+        if getattr(self, "keys", None):
+            self.keys.refresh()
         s = m.export or ExportStatus("waiting")
         choose = ui.secondary("Choose folder instead", self.choose)
         if s.state == "waiting":

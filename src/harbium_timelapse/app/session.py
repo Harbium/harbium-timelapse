@@ -59,6 +59,12 @@ def open_folder(folder: Path, tracker: Tracker | None = None) -> Opened:
     folder = Path(folder)
     editors = detect(folder)
     editor = editors[0] if editors else None
+    if editor is None:                              # no edit files yet: the editor chosen for this folder, if any
+        from ..editors import available
+        from .project import load_project
+        chosen = load_project(folder).editor
+        if chosen in available():
+            editor = available()[chosen]()
     reading = tracker.stage("Reading camera settings") if tracker else None
     seq = editor.load(folder, progress=reading) if editor else load_sequence(folder, progress=reading)
     problems = editor.problems(seq) if editor and hasattr(editor, "problems") else check_sequence(seq)
@@ -320,3 +326,61 @@ def write_export(planned: Planned, out: Path | None = None, video: Path | None =
         saved = None
     return Finished(written, check, review_findings, saved, Path(video) if video else None, timings, strip_path,
                     columns, findings, recorder.thumbnail)
+
+
+# --- keyframes (RapidRAW) ----------------------------------------------------------------------------------
+
+def choose_editor(folder: Path, name: str) -> None:
+    """Remember which editor this folder will be graded in, for a folder with no edit files yet."""
+    from ..editors import available
+    from .project import load_project
+    if name not in available():
+        raise ValueError(f"No editor called {name}.")
+    project = load_project(folder)
+    project.editor = name
+    project.save()
+
+
+def keyframes_now(editor: Editor, seq: Sequence) -> list[int]:
+    """Frames already labelled as keyframes."""
+    from ..editors.rapidraw.keyframes import keyframes_in
+    return keyframes_in(seq) if editor is not None and editor.name == "rapidraw" else []
+
+
+def suggest_keyframes(seq: Sequence, measured: np.ndarray, tracker: Tracker | None = None) -> list:
+    """Where keyframes belong: from the measured light, and its colour read from the small previews (no RAW
+    decoding). Brightness alone if previews are missing."""
+    from .. import previews
+    from ..keyframes import suggest_keyframes as suggest
+    ensure_previews(seq, tracker)
+    warmth = []
+    hook = tracker.stage("Reading colour") if tracker else None
+    for i, f in enumerate(seq):
+        image = previews.load(f.path)
+        if image is None:
+            warmth = None
+            break
+        r, b = float(image[..., 0].mean()), float(image[..., 2].mean())
+        warmth.append(np.log2(max(r, 1e-6) / max(b, 1e-6)))
+        if hook:
+            hook(i + 1, len(seq))
+    return suggest(seq, np.asarray(measured, dtype=np.float64), None if warmth is None else np.array(warmth))
+
+
+def _rapidraw_closed(editor: Editor) -> None:
+    if editor is None or editor.name != "rapidraw":
+        raise ValueError("Keyframes work with RapidRAW for now.")
+    if editor.is_running():
+        raise ValueError("RapidRAW is open. Close it, then try again: it could overwrite the labels.")
+
+
+def set_keyframes(editor: Editor, seq: Sequence, frames: list[int]) -> tuple[int, int]:
+    from ..editors.rapidraw.keyframes import set_keyframes as set_labels
+    _rapidraw_closed(editor)
+    return set_labels(seq, frames)
+
+
+def blend_keyframes(editor: Editor, seq: Sequence):
+    from ..editors.rapidraw.keyframes import blend
+    _rapidraw_closed(editor)
+    return blend(seq)

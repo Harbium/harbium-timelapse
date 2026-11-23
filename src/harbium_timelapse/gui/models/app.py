@@ -104,6 +104,8 @@ class AppModel:
         self.planned = None
         self.finished = None
         self.current = None
+        self.keyframes = None                 # [{"frame": i, "reason": why}], or None before any are chosen
+        self.keyframes_state = ""             # "", "chosen" (not labelled yet), "labelled", "blended"
 
     # --- listeners ---------------------------------------------------------------------------
 
@@ -216,6 +218,7 @@ class AppModel:
             if self.measured is not None:
                 self.request_preview()
                 self.load_previews()
+            self.load_keyframes()
         elif screen == "finish":
             self._check_cache = None                    # free space and remembered speeds may have changed
             self.request_trim_thumbs()
@@ -241,7 +244,7 @@ class AppModel:
             self._notice(project.note)
         if self.opened.editor is not None:
             project.editor = self.opened.editor.name
-        elif not project.export:
+        elif not project.export and not self.raw_without_edits:
             project.export = str(folder)                 # no editor files: these frames are the export
         if project.export:
             self.export_since = 0.0
@@ -265,14 +268,23 @@ class AppModel:
             return []
         cards, changes = [], [p for p in self.opened.problems if p.kind == "settings_change"]
         if self.raw_without_edits:
-            cards.append({"serious": True, "note": False,
-                          "message": "These are RAW files, but there are no editor edit files beside them yet, so "
-                                     "there's nowhere for Prepare to write its corrections.",
-                          "fix": "RapidRAW: open the folder and give every frame an edit (your starting grade is "
-                                 "fine), so each gets its .rrdata file. Lightroom: import the folder, select every "
-                                 "frame and choose Metadata > Save Metadata to Files. Then open the folder here "
-                                 "again. (Finish is for the frames you export afterwards, not the RAW files.)"})
-        for p in self.opened.problems:
+            cards.append({"serious": True, "note": False, "choose_editor": True,
+                          "message": "These are RAW files with no edit files beside them yet. Which editor will you "
+                                     "grade them in?",
+                          "fix": "RapidRAW: the app creates the edit files itself as it needs them (keyframe labels, "
+                                 "Prepare's corrections). Lightroom: import the folder, select every frame and choose "
+                                 "Metadata > Save Metadata to Files (Save Metadata to Files writes its .xmp files), "
+                                 "then open the folder here again. (Finish is for the frames you export afterwards, "
+                                 "not the RAW files.)"})
+        if self.opened.editor is not None and self.opened.editor.name == "rapidraw":
+            missing = [p for p in self.opened.problems if p.kind == "no_sidecar"]
+            if missing:
+                cards.append({"serious": False, "note": True, "fix": "",
+                              "message": "Some frames have no RapidRAW edit files yet. That's fine: the app creates "
+                                         "them as it needs them (keyframe labels, Prepare's corrections), and your "
+                                         "grade reaches them when you blend keyframes."})
+        for p in [q for q in self.opened.problems if not (q.kind == "no_sidecar" and self.opened.editor is not None
+                                                          and self.opened.editor.name == "rapidraw")]:
             if p.kind != "settings_change":
                 cards.append({"serious": p.serious, "message": p.message, "fix": p.fix, "note": False})
         if changes:
@@ -291,7 +303,7 @@ class AppModel:
         if self.opened is not None and self.opened.editor is not None:
             return "prepare", "Next: preview corrections"
         if self.raw_without_edits:
-            return "prepare", "Open these in your editor first"          # disabled: Prepare needs edit files
+            return "prepare", "Choose your editor first"                 # disabled until an editor is chosen
         return "finish", "Next: finish an export"
 
     @property
@@ -800,3 +812,102 @@ class AppModel:
             self.project.dismissed.append(name)
             self.project.save()
             self.changed()
+
+    # --- editor choice, for RAW folders with no edit files yet ---------------------------------------------
+
+    def choose_editor(self, name: str) -> None:
+        """Remember the editor for this folder and open it again with it."""
+        if self.opened is None:
+            return
+        folder = self.opened.seq.folder
+        if name == "lightroom":
+            self._notice("Import the folder into Lightroom, select every frame, choose Metadata > Save Metadata to "
+                         "Files, then open the folder here again.")
+            self.changed()
+            return
+        self.s.choose_editor(folder, name)
+        self.open_folder(folder)
+
+    # --- keyframes (RapidRAW): suggest, adjust, label, blend -------------------------------------------------
+
+    @property
+    def keyframes_supported(self) -> bool:
+        return self.opened is not None and self.opened.editor is not None and self.opened.editor.name == "rapidraw"
+
+    def load_keyframes(self) -> None:
+        """Pick up keyframes already labelled in RapidRAW (quick: reads the edit files)."""
+        if not self.keyframes_supported or self.keyframes is not None:
+            return
+        found = self.s.keyframes_now(self.opened.editor, self.opened.seq)
+        if found:
+            self.keyframes = [{"frame": i, "reason": "labelled in RapidRAW"} for i in found]
+            self.keyframes_state = "labelled"
+
+    def suggest_keyframes(self) -> None:
+        if not self.keyframes_supported:
+            return
+        seq, measured = self.opened.seq, self.measured
+
+        def work(t):
+            m = measured if measured is not None else self.s.measure(seq, t)
+            return m, self.s.suggest_keyframes(seq, m, t)
+
+        def done(result):
+            m, picks = result
+            self.measured = m
+            self.keyframes = [{"frame": p.frame, "reason": p.reason} for p in picks]
+            self.keyframes_state = "chosen"
+            self._notice(f"Suggested {len(picks)} keyframes. Add or remove any, then label them.")
+        self._run("Suggesting keyframes", work, done)
+
+    def add_keyframe(self, frame: int) -> None:
+        if self.opened is None or not 0 <= frame < len(self.opened.seq):
+            return
+        keys = self.keyframes or []
+        if all(k["frame"] != frame for k in keys):
+            self.keyframes = sorted(keys + [{"frame": frame, "reason": "added by you"}], key=lambda k: k["frame"])
+            self.keyframes_state = "chosen"
+        self.changed()
+
+    def remove_keyframe(self, frame: int) -> None:
+        self.keyframes = [k for k in (self.keyframes or []) if k["frame"] != frame]
+        self.keyframes_state = "chosen"
+        self.changed()
+
+    def label_keyframes(self) -> None:
+        keys = [k["frame"] for k in (self.keyframes or [])]
+        if len(keys) < 2:
+            self._notice("Choose at least two keyframes (the first and last frames, say).", "error")
+            self.changed()
+            return
+        editor, seq = self.opened.editor, self.opened.seq
+
+        def done(result):
+            self.keyframes_state = "labelled"
+            self._notice(f"Labelled {len(keys)} keyframes purple. In RapidRAW, grade just the purple frames "
+                         "(filter by purple), close RapidRAW, then blend.")
+        self._run("Labelling keyframes", lambda t: self.s.set_keyframes(editor, seq, keys), done)
+
+    def blend_keyframes(self) -> None:
+        editor, seq = self.opened.editor, self.opened.seq
+
+        def done(result):
+            self.keyframes_state = "blended"
+            held = ""
+            if result.held:
+                held = (" Couldn't blend, so they change at each keyframe: "
+                        + ", ".join(sorted(result.held)) + ".")
+            created = f" Created edit files for {result.created} frames." if result.created else ""
+            self._notice(f"Blended every setting between {len(result.keyframes)} keyframes across "
+                         f"{len(seq)} frames.{created}{held} Prepare's corrections are kept on top.")
+        self._run("Blending", lambda t: self.s.blend_keyframes(editor, seq), done)
+
+    def keyframe_thumb(self, frame: int):
+        """A small picture of the frame, from its preview (None if there isn't one yet)."""
+        from ... import previews
+        from ...app.thumbs import thumbnail
+        try:
+            source = previews._file(self.opened.seq[frame].path)
+            return thumbnail(source, 160) if source is not None and source.exists() else None
+        except (OSError, IndexError, ValueError):
+            return None
