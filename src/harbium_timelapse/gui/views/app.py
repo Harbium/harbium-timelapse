@@ -1375,6 +1375,7 @@ def start(page: ft.Page) -> View:
     """Set up the window and show the app. Fonts are read from the app's assets folder."""
     page.title = "Harbium Timelapse"
     page.padding = 0
+    page.window.min_width, page.window.min_height = 1000, 700     # below this the header and columns can't fit
     page.fonts = FONTS
     from ...app import config
     dark = config.preferences().get("theme") == "dark"            # light unless you chose dark

@@ -17,7 +17,7 @@ LIGHT = {
 }
 DARK = {
     "bg": "#141414", "panel": "#1d1d1d", "line": "#303030", "text": "#ececea", "dim": "#a2a29d",
-    "surround": "#0e0e0e", "primary_bg": "#ececea", "primary_text": "#141414",
+    "surround": "#0e0e0e", "primary_bg": "#4a4a4a", "primary_text": "#f6f6f4",      # raised, not glaring
     "measured": (125, 125, 120), "curve": (236, 236, 234),
 }
 # The timeline's colours (models.timeline.Theme) for each mode
