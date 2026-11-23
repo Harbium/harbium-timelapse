@@ -123,6 +123,8 @@ MIN_REGION_PIXELS = 200       # a region needs this many usable still pixels to 
 MIN_REGION_SHARE = 0.3        # ...and this share of its area: a mostly black or blown region's few
                               # surviving pixels are a biased sample, so it doesn't get a say
 MIN_VOTERS = 5                # fewer voting regions: use the whole frame's still pixels instead
+EVENT_GAP = 0.2               # stops: a gap this wide splitting the votes means a light event, not flicker
+EVENT_SIDE = 0.15             # ...if the group that changed least still holds this share of the weight
 
 
 def steady_change(previous: np.ndarray | None, current: np.ndarray) -> float | None:
@@ -155,25 +157,58 @@ def steady_change(previous: np.ndarray | None, current: np.ndarray) -> float | N
     still = ok & (np.abs(d - typical) < max(MOVER, 3 * spread))
     if still.sum() < MIN_STEADY_PIXELS:
         return None
-    votes = _regional_changes(previous, current, still)
+    votes = _regional_changes(previous, current, ok, d)
     if len(votes) >= MIN_VOTERS:
-        return _weighted_median(votes)
+        return _vote(votes)
     return float(np.log2(current[still].sum() / previous[still].sum()))
 
 
-def _regional_changes(previous: np.ndarray, current: np.ndarray, still: np.ndarray) -> list[tuple[float, int]]:
-    """Each region's change and how many pixels it measured it from."""
+def _regional_changes(previous: np.ndarray, current: np.ndarray, ok: np.ndarray,
+                      d: np.ndarray) -> list[tuple[float, int]]:
+    """Each region's change and how many pixels it measured it from.
+
+    Movers are found within each region, against that region's own typical change: judged against the whole
+    frame's, a light event flooding most of the frame made the regions it didn't reach look like movers, so
+    they never got a vote."""
     rows, cols = REGIONS
-    h, w = still.shape[:2]
+    h, w = ok.shape[:2]
     votes = []
     for r in range(rows):
         for c in range(cols):
             area = (slice(r * h // rows, (r + 1) * h // rows), slice(c * w // cols, (c + 1) * w // cols))
-            m = still[area]
+            usable = ok[area]
+            if usable.sum() < MIN_REGION_PIXELS:
+                continue
+            dr = d[area]
+            typical = np.median(dr[usable])
+            spread = 1.4826 * np.median(np.abs(dr[usable] - typical))
+            m = usable & (np.abs(dr - typical) < max(MOVER, 3 * spread))
             n = int(m.sum())
             if n >= MIN_REGION_PIXELS and n >= MIN_REGION_SHARE * m.size:
                 votes.append((float(np.log2(current[area][m].sum() / previous[area][m].sum())), n))
     return votes
+
+
+def _vote(votes: list[tuple[float, int]]) -> float:
+    """The frame's change from the regions' votes.
+
+    Flicker changes every region alike, so the votes cluster. A light event (headlights into the lens, a flash,
+    lights switching on) adds light to some regions only, splitting the votes into two groups with a wide gap
+    between them; the regions it didn't reach tell the truth about the camera, so the frame's change is taken
+    from the group that changed least. On James's sunset, headlights flooding most of the frame were measured
+    1.9 stops too bright, and the whole frame (sky included) was darkened to match. Without such a split, the
+    plain weighted middle vote, exactly as before."""
+    values = np.array([v for v, _ in votes])
+    order = np.argsort(values)
+    v, w = values[order], np.array([n for _, n in votes], dtype=np.float64)[order]
+    gaps = np.diff(v)
+    if gaps.size and gaps.max() > EVENT_GAP:
+        cut = int(np.argmax(gaps)) + 1
+        groups = [(v[:cut], w[:cut]), (v[cut:], w[cut:])]
+        calm = min(groups, key=lambda g: abs(float(np.average(g[0], weights=g[1]))))
+        if calm[1].sum() >= EVENT_SIDE * w.sum():
+            return _weighted_median(list(zip(calm[0].tolist(), calm[1].tolist())))
+    return _weighted_median(votes)
 
 
 def _weighted_median(votes: list[tuple[float, int]], band: float = 0.2) -> float:
