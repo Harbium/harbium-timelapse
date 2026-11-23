@@ -16,6 +16,7 @@ WIDTH = 640                      # about 0.8 MB a frame at 3:2; 229 frames ~190 
 MODES = ("after", "before", "wipe", "flicker")
 EXAGGERATE = 5                   # Flicker x5: each pixel's difference from its neighbours in time, magnified
 AROUND = 2                       # ...those neighbours: this many frames either side
+DARK = 0.002                     # linear light (about 8 of 255): darker than this is too dark to judge
 
 
 def _srgb_levels() -> np.ndarray:
@@ -99,18 +100,32 @@ class SequenceFrames:
         return out
 
     def flicker(self, i: int) -> np.ndarray:
-        """Flicker x5: each pixel against the same pixel in the frames around it (corrected), the difference
-        magnified. Leftover flicker becomes an obvious shimmer; still parts that are steady stay put."""
+        """Flicker x5: the frame's brightness against the frames around it (corrected), the difference smoothed
+        across the picture and magnified. Flicker is the same in every colour and smooth across the picture
+        (the whole frame, or a region like a sky glow); grain is random from pixel to pixel. So brightness only
+        is compared (grain can't turn into colour), the difference is averaged over blocks of about a sixteenth
+        of the frame before magnifying (grain cancels, regional flicker stays), and near-black areas are left
+        alone (too dark to judge). Moving things still show, as soft smudges."""
+        from PIL import Image
+
+        from ...finish import _linear_to_srgb
         lin = _linear().astype(np.float32)
         n = len(self.frames)
         around = [j for j in range(i - AROUND, i + AROUND + 1) if 0 <= j < n and j != i]
-        here = lin[self._after(i)]
         if not around:
             return self._after(i)
-        local = np.mean([lin[self._after(j)] for j in around], axis=0)
-        ratio = np.where(local > 1e-5, here / np.maximum(local, 1e-5), 1.0)
-        out = np.clip(local * ratio ** EXAGGERATE, 0, 1)
-        from ...finish import _linear_to_srgb
+        weights = np.array([0.2126, 0.7152, 0.0722], np.float32)
+        here = lin[self._after(i)] @ weights
+        local_rgb = np.mean([lin[self._after(j)] for j in around], axis=0)
+        local = local_rgb @ weights
+        difference = np.log2(np.maximum(here, 1e-5)) - np.log2(np.maximum(local, 1e-5))
+        judged = np.clip((local - DARK) / DARK, 0.0, 1.0)            # fades to nothing towards black
+        difference = (difference * judged).astype(np.float32)
+        h, w = difference.shape
+        block = max(1, w // 16)
+        small = Image.fromarray(difference, "F").resize((max(1, w // block), max(1, h // block)), Image.BOX)
+        smooth = np.asarray(small.resize((w, h), Image.BILINEAR), np.float32)
+        out = np.clip(local_rgb * (2.0 ** (EXAGGERATE * smooth))[..., None], 0, 1)
         return np.round(_linear_to_srgb(out) * 255).astype(np.uint8)
 
     def image(self, i: int, mode: str = "after", wipe: float = 0.5) -> np.ndarray:

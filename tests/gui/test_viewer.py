@@ -125,3 +125,16 @@ def test_the_scrub_bar_moves_the_playhead(panel):
     assert m.cursor == 57 and "frame 58 of 130" in view.label.value
     view._scrubbed(types.SimpleNamespace(control=types.SimpleNamespace(value=90)))
     assert m.cursor == 90 and view.scrub.value == 90
+
+
+def test_flicker_x5_keeps_grain_calm():
+    """Regression: grain in the shadows came out as vivid blue, green and purple speckles, read as flicker."""
+    g = np.random.default_rng(9)
+    base = np.clip(np.exp(g.uniform(np.log(0.0005), np.log(0.5), (60, 90, 1))) * np.ones((1, 1, 3)), 0, 1)
+    grainy = [reduce(np.clip(base * np.exp(g.normal(0, 0.25, base.shape)), 0, 1), 1.0) for _ in range(7)]
+    frames = SequenceFrames(grainy)
+    shown = frames.image(3, "flicker").astype(int)
+    local = np.mean([f.astype(float) for k, f in enumerate(grainy) if k != 3 and 1 <= k <= 5], axis=0)
+    assert np.abs(shown - local).mean() < 3                       # close to the steady picture, no speckles
+    tint_shown, tint_local = shown[..., 0] - shown[..., 2], local[..., 0] - local[..., 2]
+    assert np.abs(tint_shown - tint_local).mean() < 2               # magnifying adds no colour of its own
