@@ -346,3 +346,22 @@ def test_keyframes_edited_after_blending_are_caught_before_exporting(bare_raws, 
     fresh.export_with_rapidraw()
     fresh.wait()
     assert fresh.screen == "finish", fresh.message
+
+
+def test_the_viewer_loads_from_previews_and_follows_the_playhead(bare_raws, monkeypatch):
+    from harbium_timelapse import previews
+    rng = np.random.default_rng(1)
+    monkeypatch.setattr(previews, "load_small", lambda path, longest: rng.uniform(0.01, 0.4, (40, 60, 3)))
+    m = opened(bare_raws)
+    m.choose_editor("rapidraw")
+    m.wait()
+    m.load_view()
+    until(lambda: m.view is not None)
+    assert len(m.view) == N and m.view_image().shape == (40, 60, 3)
+    m.set_cursor(N + 5)
+    assert m.cursor == N - 1                                       # kept within the sequence
+    m.set_cursor(4)
+    m.toggle_keyframe_here()
+    assert [k["frame"] for k in m.keyframes] == [4]
+    m.toggle_keyframe_here()
+    assert m.keyframes == []

@@ -420,20 +420,196 @@ class PrepareScreen(Screen):
         await self.timeline.render(img)
 
 
-class KeyframesPanel:
-    """Keyframes on the Grade screen: suggest, adjust, label purple in RapidRAW, then blend."""
+class SequenceView:
+    """The viewer and timeline: the frame at the playhead above, the light over time below with keyframes as
+    diamonds (solid: labelled; outlined: suggested), the playhead as a dotted line. Click the timeline to move
+    the playhead (a diamond selects that keyframe); space plays, the arrows step (Shift: ten), K adds or removes
+    a keyframe at the playhead."""
 
-    CURVE_W, CURVE_H = 356, 96
+    WIDTH, LINE_H = 720, 110
+    FPS = 24
+    LOOP = 12                                           # frames either side of the playhead when looping
+
+    def __init__(self, screen):
+        self.screen, self.m, self.ui = screen, screen.m, screen.ui
+        w, h = self.m.view.size if self.m.view is not None else (3, 2)
+        self.HEIGHT = round(self.WIDTH * h / w)
+        self.picture = ft.RawImage(width=self.WIDTH, height=self.HEIGHT)
+        self.line = ft.RawImage(width=self.WIDTH, height=self.LINE_H)
+        self.line_box = ft.Container(self.line, width=self.WIDTH, height=self.LINE_H, on_tap_down=self._tapped)
+        self.status = self.ui.text("", dim=True, size=13)
+        self.label = self.ui.text("", size=14)
+        self.controls = ft.Row(spacing=8, wrap=True)
+        self.playing = False
+        self.loop = False
+        self._shown = self._line_key = None
+
+    def control(self):
+        ui = self.ui
+        return ft.Container(ft.Column([
+            ft.Container(self.picture, bgcolor=ui.t["surround"], border_radius=2),
+            self.status,
+            self.line_box,
+            ft.Row([self.label], alignment=ft.MainAxisAlignment.START),
+            self.controls,
+            ui.text("Space plays, the arrow keys step a frame (with Shift, ten), K adds or removes a keyframe. "
+                    "These are the RAW files with Prepare's corrections: your RapidRAW grade isn't in them.",
+                    dim=True, size=12)], spacing=8), width=self.WIDTH)
+
+    # --- drawing -----------------------------------------------------------------------------------------
+
+    def _keys(self):
+        keys = tuple(k["frame"] for k in (self.m.keyframes or []))
+        return ((), keys) if self.m.keyframes_state == "chosen" else (keys, ())
+
+    def line_image(self):
+        from ..models.timeline import Theme
+        m, t = self.m, self.ui.t
+        series = m.prepare_series
+        if series is None and m.measured is None:
+            return None
+        measured, curve = series if series is not None else (m.measured, None)
+        lines = [Series(measured, t["measured"], 1)] + ([Series(curve, t["curve"], 3)] if curve is not None else [])
+        solid, ghosts = self._keys()
+        theme = self.screen.view.chart_theme if self.screen.view is not None else Theme()
+        return render_timeline(lines, self.WIDTH, self.LINE_H, theme, steps=m.exposure_steps,
+                               flags=solid, ghosts=ghosts, current=m.cursor)
+
+    def refresh(self) -> None:
+        m, ui = self.m, self.ui
+        seq = m.opened.seq
+        m.load_view()
+        self.status.value = m.view_status
+        self.status.visible = bool(m.view_status)
+        keys = [k["frame"] for k in (m.keyframes or [])]
+        here = m.cursor in keys
+        self.label.value = (f"{seq[m.cursor].name}  ·  frame {m.cursor + 1} of {len(seq)}"
+                            + ("  ·  keyframe" if here else ""))
+
+        def mode_button(mode, words):
+            chosen = m.view_mode == mode
+            return (ui.primary if chosen else ui.secondary)(words, lambda e, md=mode: self._mode(md))
+        self.controls.controls = [
+            ui.primary("Pause" if self.playing else "Play", lambda e: self.play()),
+            ui.secondary("Loop: on" if self.loop else "Loop: off", lambda e: self._loop()),
+            mode_button("after", "After"), mode_button("before", "Before"), mode_button("wipe", "Wipe"),
+            ui.secondary("Remove keyframe (K)" if here else "Add keyframe here (K)",
+                         lambda e: self._toggle_key())]
+        if m.view_mode == "wipe":
+            self.controls.controls.append(ft.Slider(min=0, max=1, value=m.wipe, width=200,
+                                                    on_change=self._wiped, active_color=ui.t["text"]))
+        self._draw()
+
+    def _draw(self, picture_only: bool = False) -> None:
+        if self.screen.view is None:
+            return
+        m = self.m
+        key = (m.cursor, m.view_mode, round(m.wipe, 3), id(m.view))
+        line_key = (m.cursor, self._keys(), id(m.prepare_series), id(m.measured))
+
+        async def draw():
+            if key != self._shown:
+                image = await asyncio.to_thread(m.view_image)
+                if image is not None:
+                    self._shown = key
+                    await self.picture.render(image)
+            if not picture_only and line_key != self._line_key:
+                image = await asyncio.to_thread(self.line_image)
+                if image is not None:
+                    self._line_key = line_key
+                    await self.line.render(image)
+        self.screen.view.page.run_task(draw)
+
+    # --- acting ------------------------------------------------------------------------------------------
+
+    def go(self, frame: int) -> None:
+        self.m.set_cursor(frame)
+        self.refresh()
+        if self.screen.view is not None:
+            self.screen.view.page.update()
+
+    def _tapped(self, e) -> None:
+        from ..models.timeline import PAD, TOP, frame_at
+        n = len(self.m.opened.seq)
+        frame = frame_at(e.local_position.x, self.WIDTH, n)
+        if e.local_position.y <= TOP + 4:                     # on the diamonds' row: the nearest keyframe
+            keys = [k["frame"] for k in (self.m.keyframes or [])]
+            step = (self.WIDTH - 2 * PAD) / max(n - 1, 1)
+            near = [k for k in keys if abs(k - frame) * step <= 8]
+            if near:
+                frame = min(near, key=lambda k: abs(k - frame))
+        self.go(frame)
+
+    def _mode(self, mode: str) -> None:
+        self.m.view_mode = mode
+        self.go(self.m.cursor)
+
+    def _wiped(self, e) -> None:
+        self.m.wipe = float(e.control.value)
+        self._draw(picture_only=True)
+
+    def _loop(self) -> None:
+        self.loop = not self.loop
+        self.go(self.m.cursor)
+
+    def _toggle_key(self) -> None:
+        self.m.toggle_keyframe_here()
+        self.go(self.m.cursor)
+
+    def on_key(self, e) -> None:
+        key = (e.key or "").lower()
+        if key in (" ", "space"):
+            self.play()
+        elif key in ("arrow left", "arrow right"):
+            self.playing = False
+            self.go(self.m.cursor + (1 if key == "arrow right" else -1) * (10 if e.shift else 1))
+        elif key == "k":
+            self._toggle_key()
+
+    def play(self) -> None:
+        if self.playing:
+            self.playing = False
+            self.refresh()
+            return
+        if self.m.view is None or self.screen.view is None:
+            return
+        self.playing = True
+        start, n = self.m.cursor, len(self.m.opened.seq)
+        first, last = (max(0, start - self.LOOP), min(n - 1, start + self.LOOP)) if self.loop else (0, n - 1)
+        if not self.loop and start >= n - 1:
+            self.m.set_cursor(0)
+        self.refresh()
+
+        async def run():
+            import time as _time
+            tick = 1.0 / self.FPS
+            while self.playing:
+                began = _time.perf_counter()
+                nxt = self.m.cursor + 1
+                if nxt > last:
+                    if not self.loop:
+                        self.playing = False
+                        break
+                    nxt = first
+                self.m.set_cursor(nxt)
+                image = self.m.view_image()
+                if image is not None:
+                    await self.picture.render(image)
+                self.label.value = f"{self.m.opened.seq[nxt].name}  ·  frame {nxt + 1} of {n}"
+                self.screen.view.page.update()
+                await asyncio.sleep(max(0.0, tick - (_time.perf_counter() - began)))
+            self.refresh()
+            self.screen.view.page.update()
+        self.screen.view.page.run_task(run)
+
+
+class KeyframesPanel:
+    """Keyframes on the Grade screen: the list (click one to jump to it) and the steps: suggest, label purple
+    in RapidRAW, then blend. Picking frames happens in the viewer above."""
 
     def __init__(self, screen):
         self.screen, self.m, self.ui = screen, screen.m, screen.ui
         self.body = ft.Column(spacing=8)
-        # The light over time, keyframes as diamonds, the chosen frame as a dotted line; a click picks a frame.
-        self.curve = ft.RawImage(width=self.CURVE_W, height=self.CURVE_H)
-        self.curve_box = ft.Container(self.curve, width=self.CURVE_W, height=self.CURVE_H,
-                                      on_tap_down=self._tapped, border_radius=2)
-        self._drawn_key = None
-        self.pick = 0                                   # the frame the slider points at
         self.m.load_keyframes()                         # however you got here: your labelled keyframes, and
                                                         # whether the frames between them still match the blend
 
@@ -446,6 +622,11 @@ class KeyframesPanel:
             return ft.Container(width=width, height=height, bgcolor=self.ui.t["line"], border_radius=2)
         return ft.Image(src=_image_bytes(path), width=width, height=height, fit=ft.BoxFit.COVER, border_radius=2)
 
+    def _go(self, frame: int) -> None:
+        viewer = getattr(self.screen, "seq", None)
+        if viewer is not None:
+            viewer.go(frame)
+
     def refresh(self):
         ui, m = self.ui, self.m
         seq = m.opened.seq
@@ -455,31 +636,22 @@ class KeyframesPanel:
                         "between them.", dim=True, size=14)]
         if not keys:
             rows.append(ft.Row([ui.primary("Suggest keyframes", lambda e: m.suggest_keyframes())]))
+            rows.append(ui.text("Or add your own in the viewer: K adds a keyframe at the playhead.", dim=True,
+                                size=13))
             self.body.controls = rows
             return
-        if self._series() is not None:
-            rows.append(self.curve_box)
-            rows.append(ui.text("Diamonds are your keyframes. Click the curve to pick a frame.", dim=True, size=12))
-            self._redraw()
         for k in keys:
-            rows.append(ft.Row([
+            rows.append(ft.Container(ft.Row([
                 self._thumb(k["frame"], 72, 48),
                 ft.Column([ui.text(f"{seq[k['frame']].name}  (frame {k['frame'] + 1})", size=14),
                            ui.text(k["reason"], dim=True, size=13)], spacing=0, expand=True),
                 ft.TextButton("Remove", on_click=lambda e, f=k["frame"]: m.remove_keyframe(f),
-                              style=ft.ButtonStyle(color=ui.t["dim"]))], spacing=10))
-        self.pick = min(self.pick, len(seq) - 1)
-        self.name = ui.text(f"{seq[self.pick].name}  (frame {self.pick + 1})", size=13, dim=True)
-        self.thumb = ft.Container(self._thumb(self.pick, 96, 64))
-        self.slider = ft.Slider(min=0, max=max(1, len(seq) - 1), divisions=max(1, len(seq) - 1), value=self.pick,
-                                on_change=self._moved, on_change_end=self._settled, active_color=ui.t["text"])
-        self.toggle = ui.secondary(self._toggle_words(), self._toggle)
-        rows.append(ft.Row([self.thumb, ft.Column([
-            self.slider, ft.Row([self.name, self.toggle], alignment=ft.MainAxisAlignment.SPACE_BETWEEN)],
-            spacing=0, expand=True)], spacing=10))
+                              style=ft.ButtonStyle(color=ui.t["dim"]))], spacing=10),
+                on_click=lambda e, f=k["frame"]: self._go(f), ink=True, border_radius=2))
         if state == "chosen":
             rows.append(ft.Row([ui.primary("Label them purple in RapidRAW", lambda e: m.label_keyframes()),
-                                ui.secondary("Suggest again", lambda e: m.suggest_keyframes())], spacing=10))
+                                ui.secondary("Suggest again", lambda e: m.suggest_keyframes())], spacing=10,
+                               wrap=True))
         elif state == "labelled":
             stale = m.keyframes_out_of_date
             rows.append(ui.text(stale + " Blend again before exporting." if stale else
@@ -491,65 +663,6 @@ class KeyframesPanel:
                                 "keyframe's grade? Blend again.", size=14))
             rows.append(ft.Row([ui.secondary("Blend again", lambda e: m.blend_keyframes())]))
         self.body.controls = rows
-
-    # --- the curve, the chosen frame and adding or removing it ---------------------------------------------
-
-    def _series(self):
-        """(measured light, smoothing curve or None), or None before measuring."""
-        if self.m.prepare_series is not None:
-            return self.m.prepare_series
-        return (self.m.measured, None) if self.m.measured is not None else None
-
-    def _keys(self) -> tuple[int, ...]:
-        return tuple(k["frame"] for k in (self.m.keyframes or []))
-
-    def image(self):
-        """The curve as an RGB array: keyframes as diamonds, the chosen frame as a dotted line."""
-        measured, curve = self._series()
-        t = self.ui.t
-        series = [Series(measured, t["measured"], 1)] + ([Series(curve, t["curve"], 3)] if curve is not None else [])
-        from ..models.timeline import Theme
-        theme = self.screen.view.chart_theme if self.screen.view is not None else Theme()
-        return render_timeline(series, self.CURVE_W, self.CURVE_H, theme, flags=self._keys(), current=self.pick)
-
-    def _redraw(self) -> None:
-        key = (self._keys(), self.pick, id(self._series()[0]))
-        if key == self._drawn_key or self.screen.view is None:
-            return
-        self._drawn_key = key
-
-        async def draw():
-            await self.curve.render(await asyncio.to_thread(self.image))
-        self.screen.view.page.run_task(draw)
-
-    def _toggle_words(self) -> str:
-        return "Remove this keyframe" if self.pick in self._keys() else "Add this frame"
-
-    def _toggle(self, e=None) -> None:
-        (self.m.remove_keyframe if self.pick in self._keys() else self.m.add_keyframe)(self.pick)
-
-    def _choose(self, frame: int, thumbnail: bool = True) -> None:
-        seq = self.m.opened.seq
-        self.pick = int(min(max(frame, 0), len(seq) - 1))
-        self.name.value = f"{seq[self.pick].name}  (frame {self.pick + 1})"
-        self.slider.value = self.pick
-        self.toggle.content = self._toggle_words()
-        if thumbnail:
-            self.thumb.content = self._thumb(self.pick, 96, 64)
-        if self._series() is not None:
-            self._redraw()
-        if self.screen.view is not None:
-            self.screen.view.page.update()
-
-    def _tapped(self, e) -> None:
-        from ..models.timeline import frame_at
-        self._choose(frame_at(e.local_position.x, self.CURVE_W, len(self.m.opened.seq)))
-
-    def _moved(self, e) -> None:                       # dragging: name and line follow, thumbnail when it stops
-        self._choose(int(round(float(e.control.value))), thumbnail=False)
-
-    def _settled(self, e) -> None:
-        self._choose(int(round(float(e.control.value))))
 
 
 class GradeScreen(Screen):
@@ -568,11 +681,14 @@ class GradeScreen(Screen):
         self.keys = KeyframesPanel(self) if m.keyframes_supported else None
         if self.keys:
             self.keys.refresh()
+        self.seq = SequenceView(self)
+        self.seq.refresh()
         return ft.Row([ft.Column([ui.title(f"Over to {editor}."),
                                   ui.text("Grade the sequence however you like, then export every frame. "
                                           "This screen notices when the export lands.", dim=True, size=14),
-                                  *([self.keys.control()] if self.keys else []),
-                                  *steps], spacing=8, width=420),
+                                  self.seq.control(),
+                                  *([ft.Container(self.keys.control(), width=SequenceView.WIDTH)] if self.keys else []),
+                                  *steps], spacing=8, width=SequenceView.WIDTH),
                        ft.Column([ft.Container(ui.panel(self.watch), width=440), self.slice.control()], spacing=16)],
                       spacing=32, vertical_alignment=ft.CrossAxisAlignment.START, wrap=True)
 
@@ -582,6 +698,8 @@ class GradeScreen(Screen):
             self.slice.refresh()
         if getattr(self, "keys", None):
             self.keys.refresh()
+        if getattr(self, "seq", None):
+            self.seq.refresh()
         s = m.export or ExportStatus("waiting")
         choose = ui.secondary("Choose folder instead", self.choose)
         if s.state == "waiting":
@@ -622,6 +740,12 @@ class GradeScreen(Screen):
 
     def leave(self):
         self._polling = False
+        if getattr(self, "seq", None):
+            self.seq.playing = False
+
+    def on_key(self, e):
+        if getattr(self, "seq", None):
+            self.seq.on_key(e)
 
     async def choose(self, e):
         folder = await self.view.ask("get_directory_path", dialog_title="Choose the folder of exported frames")
@@ -943,6 +1067,10 @@ class View:
     def _key(self, e) -> None:
         if e.key == "Escape" and SliceViewer.current is not None:
             SliceViewer.current.close()
+            return
+        handler = getattr(self.screen, "on_key", None)
+        if handler is not None and SliceViewer.current is None:
+            handler(e)
 
     async def ask(self, method: str, **kwargs):
         """Open a file dialog. If the window doesn't answer (Flet 1.0 sometimes loses track of a

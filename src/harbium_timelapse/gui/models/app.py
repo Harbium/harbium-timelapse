@@ -106,6 +106,11 @@ class AppModel:
         self.planned = None
         self.finished = None
         self.current = None
+        self.view = None                      # the viewer's frames (SequenceFrames), loaded in the background
+        self.view_status = ""
+        self.cursor = 0                       # the playhead: the frame shown above the timeline
+        self.view_mode = "after"              # after, before or wipe
+        self.wipe = 0.5
         self.keyframes = None                 # [{"frame": i, "reason": why}], or None before any are chosen
         self.keyframes_state = ""             # "", "chosen" (not labelled yet), "labelled", "blended"
 
@@ -977,3 +982,72 @@ class AppModel:
         self._run("Exporting with RapidRAW",
                   lambda t: self.s.export_with_rapidraw(seq, out=target, tracker=t, program=program,
                                                         replace=target is not None), done)
+
+    # --- the sequence viewer: frames above the timeline -------------------------------------------------------
+
+    def load_view(self) -> None:
+        """The viewer's frames, from the previews, in the background: a tiny pass for one brightness scale, then
+        each frame at the viewer's size."""
+        if self.opened is None or self.view is not None or getattr(self, "_view_loading", False):
+            return
+        seq = self.opened.seq
+        from ... import previews
+        from .viewer import WIDTH, SequenceFrames, reduce
+
+        def work(t):
+            self.s.ensure_previews(seq, t)
+            means = []
+            hook = t.stage("Loading the viewer")
+            for i, f in enumerate(seq):
+                tiny = previews.load_small(f.path, 200)
+                if tiny is None:
+                    return None
+                means.append(float(tiny.mean()))
+                hook(i + 1, 2 * len(seq))
+            scale = 0.18 / float(np.median([m for m in means if m > 0] or [1.0]))
+            frames = []
+            for i, f in enumerate(seq):
+                frames.append(reduce(previews.load_small(f.path, WIDTH * 5 // 4), scale))
+                hook(len(seq) + i + 1, 2 * len(seq))
+            return SequenceFrames(frames)
+
+        def event(e):
+            if isinstance(e, Progress):
+                self.view_status = f"Loading the viewer: {e.done * 100 // max(e.total, 1)}%"
+            elif isinstance(e, Done):
+                self._view_loading = False
+                if e.result is None:
+                    self.view_status = "The viewer needs the previews, which aren't all there yet."
+                else:
+                    self.view, self.view_status = e.result, ""
+                    self._view_gains()
+            elif isinstance(e, Failed):
+                self._view_loading = False
+                self.view_status = f"The viewer couldn't load: {e.message}"
+            self.changed()
+        self._view_loading = True
+        self.view_status = "Loading the viewer..."
+        self.runner.start("Viewer", work, lambda e: self.post(lambda: event(e)))
+
+    def _view_gains(self) -> None:
+        """Each frame's correction for the viewer's After: Prepare's (the preview of the corrections)."""
+        if self.view is None:
+            return
+        series = self.prepare_series
+        self.view.set_gains(None if series is None else np.asarray(series[1]) - np.asarray(series[0]))
+
+    def set_cursor(self, frame: int) -> None:
+        if self.opened is not None:
+            self.cursor = int(min(max(frame, 0), len(self.opened.seq) - 1))
+
+    def view_image(self, frame: int | None = None):
+        """The picture the viewer shows for ``frame`` (default: the playhead), or None while loading."""
+        if self.view is None:
+            return None
+        if self.view.gains.shape[0] and not self.view.gains.any() and self.prepare_series is not None:
+            self._view_gains()
+        return self.view.image(self.cursor if frame is None else frame, self.view_mode, self.wipe)
+
+    def toggle_keyframe_here(self) -> None:
+        keys = [k["frame"] for k in (self.keyframes or [])]
+        (self.remove_keyframe if self.cursor in keys else self.add_keyframe)(self.cursor)

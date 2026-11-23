@@ -48,7 +48,7 @@ def _range(series: list[Series]) -> tuple[float, float]:
 
 def render_timeline(series: list[Series], width: int, height: int, theme: Theme = DARK,
                     steps: tuple[int, ...] = (), flags: tuple[int, ...] = (), current: int | None = None,
-                    cant_judge: tuple[int, ...] = ()) -> np.ndarray:
+                    cant_judge: tuple[int, ...] = (), ghosts: tuple[int, ...] = ()) -> np.ndarray:
     """The timeline as an RGB image (height x width x 3, uint8)."""
     from PIL import Image, ImageDraw
     im = Image.new("RGB", (width, height), theme.background)
@@ -77,6 +77,9 @@ def render_timeline(series: list[Series], width: int, height: int, theme: Theme 
     for i in flags:                                                    # worth a look: diamonds
         cx, cy = x(i), TOP / 2 + 2
         d.polygon([(cx, cy - 6), (cx + 6, cy), (cx, cy + 6), (cx - 6, cy)], fill=theme.mark)
+    for i in ghosts:                                                   # suggested, not labelled yet: outlines
+        cx, cy = x(i), TOP / 2 + 2
+        d.polygon([(cx, cy - 6), (cx + 6, cy), (cx, cy + 6), (cx - 6, cy)], outline=theme.mark)
     for i in cant_judge[:1] + cant_judge[-1:]:                         # one "?" at each end
         d.text((x(i) - 3, 1), "?", fill=theme.text)
     if current is not None and 0 <= current < n:

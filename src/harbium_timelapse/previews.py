@@ -83,6 +83,26 @@ def load(path: Path) -> np.ndarray | None:
         return None
 
 
+def load_small(path: Path, longest: int) -> np.ndarray | None:
+    """The preview decoded straight at a reduced size (JPEG draft mode: several times faster than a full
+    decode), in linear light at its true brightness; None if there isn't one."""
+    target = _file(path)
+    if target is None or not target.exists():
+        return None
+    from PIL import Image
+    from .timeslice import from_display
+    try:
+        with Image.open(target) as im:
+            gain = float(im.info.get("comment", b"gain=1").decode().split("=", 1)[1])
+            im.draft("RGB", (longest, longest))
+            im = im.convert("RGB")
+            if max(im.size) > longest:
+                im.thumbnail((longest, longest), Image.BILINEAR)
+            return from_display(np.asarray(im)) / gain
+    except (OSError, ValueError, IndexError):
+        return None
+
+
 def _resize(rgb: np.ndarray) -> np.ndarray:
     """To SIZE on the long edge, in linear light (so brightness stays true), channel by channel."""
     h, w = rgb.shape[:2]
