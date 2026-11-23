@@ -423,9 +423,16 @@ class PrepareScreen(Screen):
 class KeyframesPanel:
     """Keyframes on the Grade screen: suggest, adjust, label purple in RapidRAW, then blend."""
 
+    CURVE_W, CURVE_H = 356, 96
+
     def __init__(self, screen):
         self.screen, self.m, self.ui = screen, screen.m, screen.ui
         self.body = ft.Column(spacing=8)
+        # The light over time, keyframes as diamonds, the chosen frame as a dotted line; a click picks a frame.
+        self.curve = ft.RawImage(width=self.CURVE_W, height=self.CURVE_H)
+        self.curve_box = ft.Container(self.curve, width=self.CURVE_W, height=self.CURVE_H,
+                                      on_tap_down=self._tapped, border_radius=2)
+        self._drawn_key = None
         self.pick = 0                                   # the frame the slider points at
         self.m.load_keyframes()                         # however you got here: your labelled keyframes, and
                                                         # whether the frames between them still match the blend
@@ -450,6 +457,10 @@ class KeyframesPanel:
             rows.append(ft.Row([ui.primary("Suggest keyframes", lambda e: m.suggest_keyframes())]))
             self.body.controls = rows
             return
+        if self._series() is not None:
+            rows.append(self.curve_box)
+            rows.append(ui.text("Diamonds are your keyframes. Click the curve to pick a frame.", dim=True, size=12))
+            self._redraw()
         for k in keys:
             rows.append(ft.Row([
                 self._thumb(k["frame"], 72, 48),
@@ -458,23 +469,14 @@ class KeyframesPanel:
                 ft.TextButton("Remove", on_click=lambda e, f=k["frame"]: m.remove_keyframe(f),
                               style=ft.ButtonStyle(color=ui.t["dim"]))], spacing=10))
         self.pick = min(self.pick, len(seq) - 1)
-        name = ui.text(f"{seq[self.pick].name}  (frame {self.pick + 1})", size=13, dim=True)
-        thumb = ft.Container(self._thumb(self.pick, 96, 64))
-
-        def moved(e):
-            self.pick = int(round(float(e.control.value)))
-            name.value = f"{seq[self.pick].name}  (frame {self.pick + 1})"
-            self.screen.view.page.update()
-
-        def settled(e):                                # the thumbnail once the slider stops: keeps dragging light
-            thumb.content = self._thumb(self.pick, 96, 64)
-            self.screen.view.page.update()
-
-        rows.append(ft.Row([thumb, ft.Column([
-            ft.Slider(min=0, max=max(1, len(seq) - 1), divisions=max(1, len(seq) - 1), value=self.pick,
-                      on_change=moved, on_change_end=settled, active_color=ui.t["text"]),
-            ft.Row([name, ui.secondary("Add this frame", lambda e: m.add_keyframe(self.pick))],
-                   alignment=ft.MainAxisAlignment.SPACE_BETWEEN)], spacing=0, expand=True)], spacing=10))
+        self.name = ui.text(f"{seq[self.pick].name}  (frame {self.pick + 1})", size=13, dim=True)
+        self.thumb = ft.Container(self._thumb(self.pick, 96, 64))
+        self.slider = ft.Slider(min=0, max=max(1, len(seq) - 1), divisions=max(1, len(seq) - 1), value=self.pick,
+                                on_change=self._moved, on_change_end=self._settled, active_color=ui.t["text"])
+        self.toggle = ui.secondary(self._toggle_words(), self._toggle)
+        rows.append(ft.Row([self.thumb, ft.Column([
+            self.slider, ft.Row([self.name, self.toggle], alignment=ft.MainAxisAlignment.SPACE_BETWEEN)],
+            spacing=0, expand=True)], spacing=10))
         if state == "chosen":
             rows.append(ft.Row([ui.primary("Label them purple in RapidRAW", lambda e: m.label_keyframes()),
                                 ui.secondary("Suggest again", lambda e: m.suggest_keyframes())], spacing=10))
@@ -489,6 +491,65 @@ class KeyframesPanel:
                                 "keyframe's grade? Blend again.", size=14))
             rows.append(ft.Row([ui.secondary("Blend again", lambda e: m.blend_keyframes())]))
         self.body.controls = rows
+
+    # --- the curve, the chosen frame and adding or removing it ---------------------------------------------
+
+    def _series(self):
+        """(measured light, smoothing curve or None), or None before measuring."""
+        if self.m.prepare_series is not None:
+            return self.m.prepare_series
+        return (self.m.measured, None) if self.m.measured is not None else None
+
+    def _keys(self) -> tuple[int, ...]:
+        return tuple(k["frame"] for k in (self.m.keyframes or []))
+
+    def image(self):
+        """The curve as an RGB array: keyframes as diamonds, the chosen frame as a dotted line."""
+        measured, curve = self._series()
+        t = self.ui.t
+        series = [Series(measured, t["measured"], 1)] + ([Series(curve, t["curve"], 3)] if curve is not None else [])
+        from ..models.timeline import Theme
+        theme = self.screen.view.chart_theme if self.screen.view is not None else Theme()
+        return render_timeline(series, self.CURVE_W, self.CURVE_H, theme, flags=self._keys(), current=self.pick)
+
+    def _redraw(self) -> None:
+        key = (self._keys(), self.pick, id(self._series()[0]))
+        if key == self._drawn_key or self.screen.view is None:
+            return
+        self._drawn_key = key
+
+        async def draw():
+            await self.curve.render(await asyncio.to_thread(self.image))
+        self.screen.view.page.run_task(draw)
+
+    def _toggle_words(self) -> str:
+        return "Remove this keyframe" if self.pick in self._keys() else "Add this frame"
+
+    def _toggle(self, e=None) -> None:
+        (self.m.remove_keyframe if self.pick in self._keys() else self.m.add_keyframe)(self.pick)
+
+    def _choose(self, frame: int, thumbnail: bool = True) -> None:
+        seq = self.m.opened.seq
+        self.pick = int(min(max(frame, 0), len(seq) - 1))
+        self.name.value = f"{seq[self.pick].name}  (frame {self.pick + 1})"
+        self.slider.value = self.pick
+        self.toggle.content = self._toggle_words()
+        if thumbnail:
+            self.thumb.content = self._thumb(self.pick, 96, 64)
+        if self._series() is not None:
+            self._redraw()
+        if self.screen.view is not None:
+            self.screen.view.page.update()
+
+    def _tapped(self, e) -> None:
+        from ..models.timeline import frame_at
+        self._choose(frame_at(e.local_position.x, self.CURVE_W, len(self.m.opened.seq)))
+
+    def _moved(self, e) -> None:                       # dragging: name and line follow, thumbnail when it stops
+        self._choose(int(round(float(e.control.value))), thumbnail=False)
+
+    def _settled(self, e) -> None:
+        self._choose(int(round(float(e.control.value))))
 
 
 class GradeScreen(Screen):
