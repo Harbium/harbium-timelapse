@@ -185,20 +185,15 @@ PRORES_CHOICES = [("proxy", "Proxy (smallest, for rough cuts)"), ("lt", "LT (lig
 
 
 def explain(s: ExportSettings) -> str:
-    """One or two plain sentences on what the current video choice means."""
+    """One short line on what the current video choice means."""
     o = s.options()
     if o.codec == "prores":
-        return ("ProRes keeps nearly all the quality, for cutting in a video editor such as Premiere, Resolve or "
-                "Final Cut. Files are large. " + ("4444 keeps full colour detail." if o.subsampling == "444" else
-                "Colour is kept at 4:2:2, plenty for grading."))
-    words = ["H.264 plays on practically anything." if o.codec == "h264" else
-             "H.265 gives smaller files than H.264 at the same quality, and smoother skies."]
+        return "ProRes is for editing in Premiere, Resolve or Final Cut. Files are large."
+    words = ["H.264 plays anywhere." if o.codec == "h264" else "H.265: smaller files and smoother skies."]
     if o.codec == "h265":
-        words.append("10-bit keeps gradients smooth at about the same file size; 8-bit plays on older devices."
-                     if o.depth == 10 else "8-bit plays on older devices; 10-bit would keep gradients smoother "
-                     "at about the same file size.")
-    words.append("Standard colour (4:2:0) is what every player and website uses." if o.subsampling == "420" else
-                 "More colour detail (4:2:2 or 4:4:4) is for editing; many players and websites can't play it.")
+        words.append("10-bit keeps gradients smooth." if o.depth == 10 else "8-bit plays on older devices.")
+    words.append("Standard colour plays everywhere." if o.subsampling == "420" else
+                 "Extra colour detail is for editing; many players can't play it.")
     return " ".join(words)
 
 
@@ -241,8 +236,7 @@ def notes(s: ExportSettings, out_width: int | None, out_height: int | None = Non
         too_big = ((out_width // 16) * (out_height // 16) > H264_MAX_MACROBLOCKS if s.codec == "h264"
                    else out_width * out_height > H265_MAX_SAMPLES)
         if too_big:
-            out.append(f"{out_width} x {out_height} is beyond what most players' hardware can decode (level 5.1): "
-                       "it may show blocky patches. Up to 4K keeps it within.")
+            out.append(f"{out_width} x {out_height} may not play smoothly on many devices. Up to 4K is safe.")
     if s.frames and s.frames_format == "tif":
         out.append("16-bit TIFF frames are large: several times the size of JPEGs.")
     return out

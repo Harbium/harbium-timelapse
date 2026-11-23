@@ -338,7 +338,7 @@ def test_keyframes_edited_after_blending_are_caught_before_exporting(bare_raws, 
     assert "glow amount" in fresh.keyframes_out_of_date and "halation amount" in fresh.keyframes_out_of_date
     fresh.screen = "grade"
     fresh.export_with_rapidraw()                           # first press: a warning, nothing exported
-    assert fresh.screen == "grade" and "Blend again first" in fresh.message
+    assert fresh.screen == "grade" and "Blend again" in fresh.message
     fresh.blend_keyframes()
     fresh.wait()
     assert fresh.keyframes_state == "blended" and not fresh.keyframes_out_of_date

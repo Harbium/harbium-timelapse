@@ -100,11 +100,11 @@ def test_trimmed_video_with_advanced_options(tmp_path):
 
 def test_choices_are_explained_in_plain_words(tmp_path):
     from harbium_timelapse.gui.models.export import ExportSettings, explain
-    assert "plays on practically anything" in explain(ExportSettings(codec="h264"))
+    assert "plays anywhere" in explain(ExportSettings(codec="h264"))
     text = explain(ExportSettings(codec="h265"))
-    assert "smaller files" in text and "about the same file size" in text and "every player" in text
+    assert "smaller files" in text and "gradients" in text and "plays everywhere" in text
     assert "for editing" in explain(ExportSettings(codec="h264", chroma="444"))
-    assert "video editor" in explain(ExportSettings(codec="prores"))
+    assert "for editing" in explain(ExportSettings(codec="prores"))
 
 
 def test_the_visual_trim_uses_cached_thumbnails(tmp_path):
@@ -133,5 +133,5 @@ def test_up_to_4k_fits_a_4k_frame_not_just_its_width():
     assert output_size(s, 6000, 3376) == (3838, 2160) or output_size(s, 6000, 3376)[1] <= 2160
     assert output_size(ExportSettings(resolution="4K"), 1920, 1280) == (1920, 1280)        # never enlarged
     big = ExportSettings(resolution="custom", custom_width=3840)
-    assert any("level 5.1" in n for n in notes(big, 3840, 2560))
-    assert not any("level 5.1" in n for n in notes(s, 3240, 2160))
+    assert any("may not play smoothly" in n for n in notes(big, 3840, 2560))
+    assert not any("may not play smoothly" in n for n in notes(s, 3240, 2160))

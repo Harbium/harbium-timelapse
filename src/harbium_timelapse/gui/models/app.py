@@ -279,20 +279,16 @@ class AppModel:
         cards, changes = [], [p for p in self.opened.problems if p.kind == "settings_change"]
         if self.raw_without_edits:
             cards.append({"serious": True, "note": False, "choose_editor": True,
-                          "message": "These are RAW files with no edit files beside them yet. Which editor will you "
-                                     "grade them in?",
-                          "fix": "RapidRAW: the app creates the edit files itself as it needs them (keyframe labels, "
-                                 "Prepare's corrections). Lightroom: import the folder, select every frame and choose "
-                                 "Metadata > Save Metadata to Files (Save Metadata to Files writes its .xmp files), "
-                                 "then open the folder here again. (Finish is for the frames you export afterwards, "
-                                 "not the RAW files.)"})
+                          "message": "Which editor will you grade these RAW files in?",
+                          "fix": "RapidRAW: the app creates the edit files it needs. Lightroom: import the folder, "
+                                 "select every frame, choose Metadata > Save Metadata to Files, then open the folder "
+                                 "here again."})
         if self.opened.editor is not None and self.opened.editor.name == "rapidraw":
             missing = [p for p in self.opened.problems if p.kind == "no_sidecar"]
             if missing:
                 cards.append({"serious": False, "note": True, "fix": "",
-                              "message": "Some frames have no RapidRAW edit files yet. That's fine: the app creates "
-                                         "them as it needs them (keyframe labels, Prepare's corrections), and your "
-                                         "grade reaches them when you blend keyframes."})
+                              "message": "Some frames have no RapidRAW edit files yet. The app creates them when "
+                                         "it needs them."})
         for p in [q for q in self.opened.problems if not (q.kind == "no_sidecar" and self.opened.editor is not None
                                                           and self.opened.editor.name == "rapidraw")]:
             if p.kind != "settings_change":
@@ -301,10 +297,10 @@ class AppModel:
             first, last = changes[0].message, changes[-1].message
             def name(m: str) -> str:
                 return m.split(" at ", 1)[-1].split(":", 1)[0] if " at " in m else ""
-            span = f", from {name(first)} to {name(last)}" if len(changes) > 1 else f" at {name(first)}"
+            span = f" ({name(first)} to {name(last)})" if len(changes) > 1 else f" at {name(first)}"
             cards.append({"serious": False, "note": True, "fix": "",
                           "message": f"{len(changes)} exposure change{'s' if len(changes) > 1 else ''} while shooting"
-                                     f"{span}. Nothing to do: each is smoothed into a gentle ramp.",
+                                     f"{span}. Each is smoothed into a gentle ramp.",
                           "details": [p.message for p in changes]})
         return cards
 
@@ -882,8 +878,7 @@ class AppModel:
         off = [o for o in off if o[1] != [self.s.NOT_BLENDED]]
         words = ", ".join(re.sub(r"(?<!^)([A-Z])", r" \1", s).lower() for s in settings[:4])
         more = f" and {len(settings) - 4} more" if len(settings) > 4 else ""
-        return (f"{len(off)} frames don't match the blend between your keyframes ({words}{more}): the keyframes "
-                "changed since the last blend.")
+        return f"{len(off)} frames don't match your keyframes ({words}{more})."
 
     def suggest_keyframes(self) -> None:
         if not self.keyframes_supported:
@@ -926,8 +921,7 @@ class AppModel:
 
         def done(result):
             self.keyframes_state = "labelled"
-            self._notice(f"Labelled {len(keys)} keyframes purple. In RapidRAW, grade just the purple frames "
-                         "(filter by purple), close RapidRAW, then blend.")
+            self._notice(f"Labelled {len(keys)} keyframes purple. Grade them in RapidRAW, close it, then blend.")
         self._run("Labelling keyframes", lambda t: self.s.set_keyframes(editor, seq, keys), done)
 
     def blend_keyframes(self) -> None:
@@ -938,11 +932,8 @@ class AppModel:
             self.keyframes_off, self._export_warned = [], False
             held = ""
             if result.held:
-                held = (" Couldn't blend, so they change at each keyframe: "
-                        + ", ".join(sorted(result.held)) + ".")
-            created = f" Created edit files for {result.created} frames." if result.created else ""
-            self._notice(f"Blended every setting between {len(result.keyframes)} keyframes across "
-                         f"{len(seq)} frames.{created}{held} Prepare's corrections are kept on top.")
+                held = " These change at each keyframe instead: " + ", ".join(sorted(result.held)) + "."
+            self._notice(f"Blended {len(result.keyframes)} keyframes across {len(seq)} frames.{held}")
         self._run("Blending", lambda t: self.s.blend_keyframes(editor, seq), done)
 
     def keyframe_thumb(self, frame: int):
@@ -975,8 +966,7 @@ class AppModel:
         stale = self.keyframes_out_of_date
         if stale and not getattr(self, "_export_warned", False):
             self._export_warned = True
-            self._notice(stale + " Blend again first, or press Export with RapidRAW again to export as they are.",
-                         "error")
+            self._notice(stale + " Blend again, or press Export again to export them as they are.", "error")
             self.changed()
             return
         seq, program = self.opened.seq, self.rapidraw_program

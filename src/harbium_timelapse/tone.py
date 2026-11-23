@@ -48,8 +48,8 @@ class ToneShares:
         most, least = int(np.argmax(self.shares)), int(np.argmin(self.shares))
         name = lambda i: NAMES[bands[i]] if bands[i] < len(NAMES) else f"level {i + 1}"    # noqa: E731
         ratio = self.shares[most] / max(self.shares[least], 1e-6)
-        return (f"Tone-aware: {name(most)} got {ratio:.1f}x the correction of {name(least)}, because the grade "
-                "stretched their flicker more (strong contrast, a curve, or highlight and shadow sliders do this).")
+        first = name(most)
+        return f"{first[0].upper()}{first[1:]} got {ratio:.1f}x the correction of {name(least)}."
 
 
 def tiny(small_linear_rgb: np.ndarray) -> np.ndarray:

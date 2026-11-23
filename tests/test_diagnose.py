@@ -63,7 +63,7 @@ def test_steep_real_change_is_explained_not_blamed():
     t = np.arange(90, dtype=float)
     target = -0.005 * t - 0.0006 * np.maximum(t - 60, 0) ** 2
     f = check_sections(target, target, target)
-    assert f.kind == "note" and "end" in f.title and f.fix.startswith("Nothing to fix")
+    assert f.kind == "note" and "end" in f.title and "light itself" in f.detail and not f.fix
 
 
 def test_levels_carrying_more_of_the_flicker_are_flagged_as_under_corrected():
@@ -75,7 +75,7 @@ def test_levels_carrying_more_of_the_flicker_are_flagged_as_under_corrected():
         rec.before.append(before)
         rec.after.append(before)
     finding = check_tones(rec, flicker)
-    assert finding.kind == "look" and "more of the flicker" in finding.title and "contrast" in finding.fix
+    assert finding.kind == "look" and "keep some flicker" in finding.title and "contrast" in finding.fix
 
 
 def test_dither_in_deep_shadows_is_not_read_as_flicker_after_correction():

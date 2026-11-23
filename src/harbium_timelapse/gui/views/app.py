@@ -94,6 +94,13 @@ class UI:
             side=ft.BorderSide(1, t["line"]), padding=ft.Padding(16, 14, 16, 14),
             text_style=ft.TextStyle(size=self.px(14), font_family=BODY)))
 
+    def small(self, label: str, on_click) -> ft.OutlinedButton:
+        """A compact outlined button, for actions on one row of a list (Remove, Looks fine)."""
+        t = self.t
+        return ft.OutlinedButton(label, on_click=on_click, style=ft.ButtonStyle(
+            color=t["text"], shape=ft.RoundedRectangleBorder(radius=2), side=ft.BorderSide(1, t["line"]),
+            padding=ft.Padding(12, 8, 12, 8), text_style=ft.TextStyle(size=self.px(13), font_family=BODY)))
+
     def panel(self, content, padding: int = 16) -> ft.Container:
         return ft.Container(content, bgcolor=self.t["panel"], padding=padding, border_radius=2,
                             border=ft.Border.all(1, self.t["line"]))
@@ -786,8 +793,7 @@ class KeyframesPanel:
                 self._thumb(k["frame"], 72, 48),
                 ft.Column([ui.text(f"{seq[k['frame']].name}  (frame {k['frame'] + 1})", size=14),
                            ui.text(k["reason"], dim=True, size=13)], spacing=0, expand=True),
-                ft.TextButton("Remove", on_click=lambda e, f=k["frame"]: m.remove_keyframe(f),
-                              style=ft.ButtonStyle(color=ui.t["dim"]))], spacing=10),
+                ui.small("Remove", lambda e, f=k["frame"]: m.remove_keyframe(f))], spacing=10),
                 on_click=lambda e, f=k["frame"]: self._go(f), ink=True, border_radius=2))
         if state == "chosen":
             rows.append(ft.Row([ui.primary("Label them purple in RapidRAW", lambda e: m.label_keyframes()),
@@ -1184,7 +1190,7 @@ class DoneScreen(Screen):
             return
         self.flags.controls = [ft.Container(
             ft.Row([ui.text(name, mono=True, size=14), ft.Container(ui.text(note, dim=True, size=14), expand=True),
-                    ui.secondary("Looks fine", lambda e, n=name: m.looks_fine(n))], spacing=16),
+                    ui.small("Looks fine", lambda e, n=name: m.looks_fine(n))], spacing=16),
             padding=ft.Padding(0, 8, 0, 8), border=ft.Border(bottom=ft.BorderSide(1, ui.t["line"])))
             for name, note in items]
 

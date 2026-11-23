@@ -159,8 +159,7 @@ def check_tones(rec: Recorder, reference: np.ndarray | None = None) -> Finding:
     frame = _reference(rec, reference, b, still)
     flicker = jitter(frame)
     if flicker < 0.004:
-        return Finding("ok", "Tones: almost no flicker to judge",
-                       f"The frame wobbled by only {flicker:.3f} stops before correction.", fix="Nothing to fix.")
+        return Finding("ok", "Tones: no flicker to speak of", f"{flicker:.3f} stops before correction.")
     edges = np.percentile(ref[still], [p for _, lo, hi in BANDS for p in (lo, hi)])
     rows, unsure = [], []
     for i, (name, _, _) in enumerate(BANDS):
@@ -172,35 +171,25 @@ def check_tones(rec: Recorder, reference: np.ndarray | None = None) -> Finding:
     words = ", ".join(f"{n} {k * 100:.0f}%" for n, k, _ in rows)
     low = [(n, k, se) for n, k, se in rows if k + 2 * se < 0.7]
     high = [(n, k, se) for n, k, se in rows if k - 2 * se > 1.4]
-    caveat = (f" Too much else moves in the {' and '.join(n for n, _, _ in unsure)} to tell." if unsure else "")
+    caveat = (f" Too much movement in the {' and '.join(n for n, _, _ in unsure)} to judge." if unsure else "")
     if low:
         names = " and ".join(n for n, _, _ in low)
         worst = max((1 - k) * flicker for _, k, _ in low)
-        return Finding("look", f"Tones: the {names} carry less of the flicker, so they're over-corrected",
-                       f"Share of the frame's measured flicker ({flicker:.3f} stops) at each level: {words}. One "
-                       f"correction for every level adds up to about {worst:.3f} stops of steps in the {names}, most "
-                       "likely because the grade compressed them." + caveat,
-                       fix=f"In your editor, ease off whatever compresses the {names} (a strong curve shoulder, or a "
-                           "big Highlights or Shadows move), export again and finish again. A tone-aware correction "
-                           "in harbium-timelapse would also fix it; it isn't built yet.")
+        return Finding("look", f"Tones: the {names} are over-corrected",
+                       f"They flicker less than the rest of the frame, so the correction adds up to {worst:.3f} stops "
+                       "there. Usually a grade that compresses them." + caveat,
+                       fix=f"Ease off whatever compresses the {names} (a strong curve shoulder, Highlights or "
+                           "Shadows), then export and finish again.")
     if high:
         names = " and ".join(n for n, _, _ in high)
         worst = max((k - 1) * flicker for _, k, _ in high)
-        return Finding("look", f"Tones: the {names} carry more of the flicker, so they're under-corrected",
-                       f"Share of the frame's measured flicker ({flicker:.3f} stops) at each level: {words}. One "
-                       f"correction for every level leaves up to about {worst:.3f} stops of flicker in the {names}, "
-                       "most likely because the grade steepens them (strong contrast or an S-curve amplifies "
-                       "flicker at the levels it stretches)." + caveat,
-                       fix=f"In your editor, ease the contrast or the curve's steepness over the {names}, export and "
-                           "finish again. A tone-aware correction in harbium-timelapse would fix it without "
-                           "changing your grade; it isn't built yet.")
+        return Finding("look", f"Tones: the {names} keep some flicker",
+                       f"Your grade stretches the {names}, so they flicker more than the rest of the frame. Up to "
+                       f"{worst:.3f} stops is left there." + caveat,
+                       fix=f"Ease the contrast or the curve over the {names}, then export and finish again.")
     if not rows:
-        return Finding("ok", "Tones: too much movement to judge the levels",
-                       "Every brightness level has too much else moving in it (leaves, people, lights) to measure "
-                       "its flicker reliably.", fix="Nothing to fix.")
-    return Finding("ok", "Tones: every brightness level carries the frame's flicker",
-                   f"Share of the frame's measured flicker ({flicker:.3f} stops) at each level: {words}. One "
-                   "correction suits every level in this sequence." + caveat, fix="Nothing to fix.")
+        return Finding("ok", "Tones: too much movement to judge", "")
+    return Finding("ok", "Tones: every level steadies alike", f"Share of the flicker by level: {words}." + caveat)
 
 
 def check_tones_after(rec: Recorder, tone) -> Finding:
@@ -223,8 +212,8 @@ def check_tones_after(rec: Recorder, tone) -> Finding:
                 continue
             words.append(f"{name} {jitter(level(b)):.3f} → {jitter(level(a)):.3f}")
     return Finding("ok", "Tones: corrected level by level",
-                   tone.describe() + (" Wobble per level (stops), before → after: " + ", ".join(words) + "."
-                                      if words else ""), fix="Nothing to fix.")
+                   tone.describe() + (" Flicker by level, before → after (stops): " + ", ".join(words) + "."
+                                      if words else ""))
 
 
 def check_regions(rec: Recorder, reference: np.ndarray | None = None) -> Finding:
@@ -236,7 +225,7 @@ def check_regions(rec: Recorder, reference: np.ndarray | None = None) -> Finding
     frame = _reference(rec, reference, b, still)
     flicker = jitter(frame)
     if flicker < 0.004:
-        return Finding("ok", "Regions: almost no flicker to judge", "", fix="Nothing to fix.")
+        return Finding("ok", "Regions: no flicker to speak of", "")
     rows, cols = GRID
     yy, xx = np.divmod(np.arange(h * w), w)
     boxes, worst, unsure = [], 0.0, 0
@@ -253,17 +242,14 @@ def check_regions(rec: Recorder, reference: np.ndarray | None = None) -> Finding
             elif k + 2 * se < 0.6:                       # confidently carries much less of the flicker
                 boxes.append((r / rows, c / cols, (r + 1) / rows, (c + 1) / cols))
                 worst = max(worst, (1 - k) * flicker)
-    note = f" {unsure} area{'s' if unsure != 1 else ''} had too much movement to judge." if unsure else ""
+    note = f"{unsure} area{'s' if unsure != 1 else ''} had too much movement to judge." if unsure else ""
     if not boxes:
-        return Finding("ok", "Regions: every area carries the frame's flicker",
-                       "The correction suits every part of the frame it could judge." + note, fix="Nothing to fix.")
-    return Finding("look", f"Regions: {len(boxes)} area{'s' if len(boxes) > 1 else ''} picked up small steps",
-                   "These areas carry much less of the frame's flicker (often because steady lamps light them while "
-                   f"the daylight wobbled), so correcting the whole frame added steps of up to about {worst:.3f} "
-                   "stops there." + note, boxes=boxes,
-                   fix="In your editor, mask the marked areas and give them the opposite of the correction (or simply "
-                       "exclude them from your deflicker if your editor allows it), then export and finish again. If the "
-                       "steps are hard to see in the film, it's fine to leave them.")
+        return Finding("ok", "Regions: every area steadies alike", note)
+    return Finding("look", f"Regions: {len(boxes)} area{'s' if len(boxes) > 1 else ''} may show small steps",
+                   "These areas flicker less than the frame (often lit by steady lamps), so the correction adds up to "
+                   f"{worst:.3f} stops there." + (" " + note if note else ""), boxes=boxes,
+                   fix="If you can see it in the film, mask these areas in your editor and reduce the correction there. "
+                       "Otherwise, leave it.")
 
 
 def check_sections(measured: np.ndarray, target: np.ndarray, after: np.ndarray) -> Finding:
@@ -273,17 +259,14 @@ def check_sections(measured: np.ndarray, target: np.ndarray, after: np.ndarray) 
     thirds = [(0, n // 3), (n // 3, 2 * n // 3), (2 * n // 3, n)]
     change = [abs(float(np.mean(np.diff(target[a:b])))) for a, b in thirds]
     left = [jitter(after[a:b]) for a, b in thirds]
-    words = (f"Real change per frame: {change[0]:.3f}, {change[1]:.3f} and {change[2]:.3f} stops at the start, "
-             f"middle and end; flicker left: {left[0]:.3f}, {left[1]:.3f}, {left[2]:.3f}.")
+    words = (f"Change per frame at the start, middle and end: {change[0]:.3f}, {change[1]:.3f}, {change[2]:.3f} stops. "
+             f"Flicker left: {left[0]:.3f}, {left[1]:.3f}, {left[2]:.3f}.")
     fast = max(change) / max(min(change), 1e-4)
     if fast >= 3:
         where = ("start", "middle", "end")[int(np.argmax(change))]
         return Finding("note", f"Sections: the light changes {fast:.0f}x faster at the {where}",
-                       words + f" Steps between frames at the {where} of the time slice are mostly real change, "
-                       "not flicker: what matters is that they stay even.",
-                       fix="Nothing to fix. To make the change look gentler, ease the exposure across those frames in "
-                           "your edit (that's a creative choice, not a correction).")
-    return Finding("ok", "Sections: the light changes at a similar pace throughout", words)
+                       words + " That's the light itself, not flicker.")
+    return Finding("ok", "Sections: the light changes at an even pace", words)
 
 
 def check_blends(measured: np.ndarray, window: int = 8) -> Finding:
@@ -304,15 +287,11 @@ def check_blends(measured: np.ndarray, window: int = 8) -> Finding:
         if all(abs(frame - f) > window for f in found):
             found.append(frame)
     if not found:
-        return Finding("ok", "Blends: the light's pace changes smoothly",
-                       "No sudden switches in how fast the light changes, as an editing keyframe or blend can cause.")
+        return Finding("ok", "Blends: no sudden changes of pace", "")
     names = ", ".join(str(f + 1) for f in sorted(found))
-    return Finding("note", f"Blends: the pace of change switches abruptly near frame {names}",
-                   "The light's rate of change jumps there, which is the usual sign of a keyframe or a blend "
-                   "between edits.", frames=sorted(found),
-                   fix=f"Open frame {names} in your editor. If a keyframe sits there, move it or soften the change "
-                       "between the keyframes either side (with RapidRAW, timelapse-rapidraw refine blends edits "
-                       "smoothly between keyframes). Or raise the smoothness in Finish to round the switch off.")
+    return Finding("note", f"Blends: a sudden change of pace near frame {names}",
+                   "Usually a keyframe or an edit that changes abruptly.", frames=sorted(found),
+                   fix=f"Check frame {names} in your editor: move or soften the keyframe there, or raise Smoothness.")
 
 
 def diagnose(rec: Recorder, measured: np.ndarray, target: np.ndarray, after: np.ndarray,
