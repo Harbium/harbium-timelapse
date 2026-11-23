@@ -109,7 +109,10 @@ class AppModel:
         self.view = None                      # the viewer's frames (SequenceFrames), loaded in the background
         self.view_status = ""
         self.cursor = 0                       # the playhead: the frame shown above the timeline
-        self.view_mode = "after"              # after, before or wipe
+        self.view_mode = "after"              # after, before, wipe or flicker
+        self.export_view = None               # the Review screen's viewer: the exported (graded) frames
+        self.export_view_status = ""
+        self.export_cursor = 0
         self.wipe = 0.5
         self.keyframes = None                 # [{"frame": i, "reason": why}], or None before any are chosen
         self.keyframes_state = ""             # "", "chosen" (not labelled yet), "labelled", "blended"
@@ -555,6 +558,7 @@ class AppModel:
         self.project.reach("exported")
         self.project.save()
         self.planned = self.finished = None
+        self.export_view, self.export_cursor = None, 0
         self.screen = "finish"
         self._default_video_path()
         self.changed()
@@ -777,6 +781,7 @@ class AppModel:
 
     def _finished(self, result) -> None:
         self.planned, self.finished = result
+        self.export_view, self.export_cursor = None, 0          # a new run: the Review viewer loads it afresh
         t = self.finished.timings
         if t.get("elapsed") and t.get("frames"):
             remember_speed(self.out, t["elapsed"] / t["frames"])     # for the next estimate of this kind
@@ -1052,3 +1057,62 @@ class AppModel:
     def toggle_keyframe_here(self) -> None:
         keys = [k["frame"] for k in (self.keyframes or [])]
         (self.remove_keyframe if self.cursor in keys else self.add_keyframe)(self.cursor)
+
+    # --- the Review screen's viewer: your exported frames, before and after Finish ----------------------------
+
+    @property
+    def finish_series(self):
+        """(measured light, smoothing curve) of the export, in stops, for the Review timeline."""
+        if self.planned is None:
+            return None
+        from ...finish import LUMA
+        plan = self.planned.plan
+        return plan.measured @ LUMA, plan.target @ LUMA
+
+    def load_export_view(self) -> None:
+        """The exported frames, small, in the background (graded already, so shown as they are; After adds
+        Finish's per-channel, tone-aware correction)."""
+        if self.planned is None or self.export_view is not None or getattr(self, "_export_view_loading", False):
+            return
+        frames, plan = list(self.planned.frames), self.planned.plan
+        from .viewer import WIDTH, SequenceFrames
+
+        def small(path):
+            from PIL import Image
+            with Image.open(path) as im:
+                im.draft("RGB", (WIDTH * 5 // 4, WIDTH * 5 // 4))
+                im = im.convert("RGB")
+                if im.size[0] > WIDTH:
+                    im = im.resize((WIDTH, max(1, round(im.size[1] * WIDTH / im.size[0]))), Image.BILINEAR)
+                return np.ascontiguousarray(np.asarray(im))
+
+        def work(t):
+            hook = t.stage("Loading the viewer")
+            out = []
+            for i, f in enumerate(frames):
+                out.append(small(f))
+                hook(i + 1, len(frames))
+            return SequenceFrames(out, gains=plan.gains, tone=plan.tone)
+
+        def event(e):
+            if isinstance(e, Progress):
+                self.export_view_status = f"Loading the viewer: {e.done * 100 // max(e.total, 1)}%"
+            elif isinstance(e, Done):
+                self._export_view_loading = False
+                self.export_view, self.export_view_status = e.result, ""
+            elif isinstance(e, Failed):
+                self._export_view_loading = False
+                self.export_view_status = f"The viewer couldn't load: {e.message}"
+            self.changed()
+        self._export_view_loading = True
+        self.export_view_status = "Loading the viewer..."
+        self.runner.start("Export viewer", work, lambda e: self.post(lambda: event(e)))
+
+    def set_export_cursor(self, frame: int) -> None:
+        if self.planned is not None:
+            self.export_cursor = int(min(max(frame, 0), len(self.planned.frames) - 1))
+
+    def export_view_image(self, frame: int | None = None):
+        if self.export_view is None:
+            return None
+        return self.export_view.image(self.export_cursor if frame is None else frame, self.view_mode, self.wipe)

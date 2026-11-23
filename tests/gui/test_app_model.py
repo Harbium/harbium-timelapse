@@ -384,3 +384,21 @@ def test_on_prepare_the_viewer_follows_the_smoothness_slider(folder, monkeypatch
     until(lambda: m.preview is not None and not m.previewing and not np.allclose(m.view.gains, before))
     measured, curve = m.prepare_series
     assert np.allclose(m.view.gains, curve - measured)                 # ...and After follows at once
+
+
+@pytest.mark.skipif(not shutil.which("ffmpeg"), reason="needs ffmpeg")
+def test_the_review_viewer_loads_the_exported_frames(folder, tmp_path):
+    m = opened(folder)
+    m.project.reach("prepared")
+    sky(folder.parent / "final-export")
+    m.use_export(folder.parent / "final-export")
+    m.choose_preset("share")
+    m.set_video_path(tmp_path / "film.mp4")
+    m.start_finish()
+    m.wait()
+    assert m.screen == "done", m.message
+    m.load_export_view()
+    until(lambda: m.export_view is not None)
+    assert len(m.export_view) == len(m.planned.frames) and m.export_view.gains.shape == (len(m.planned.frames), 3)
+    m.set_export_cursor(3)
+    assert m.export_view_image().ndim == 3

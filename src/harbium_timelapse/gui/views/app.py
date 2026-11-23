@@ -415,27 +415,79 @@ class PrepareScreen(Screen):
         self.seq.playing = False
 
 
+class RawSource:
+    """What a viewer on Prepare or Grade shows: the RAW previews with Prepare's corrections."""
+
+    def __init__(self, m):
+        self.m = m
+
+    frames = property(lambda self: self.m.view)
+    cursor = property(lambda self: self.m.cursor)
+    status = property(lambda self: self.m.view_status)
+    series = property(lambda self: self.m.prepare_series if self.m.prepare_series is not None
+                      else ((self.m.measured, None) if self.m.measured is not None else None))
+    steps = property(lambda self: self.m.exposure_steps)
+    names = property(lambda self: [f.name for f in self.m.opened.seq])
+
+    def load(self):
+        self.m.load_view()
+
+    def set(self, frame):
+        self.m.set_cursor(frame)
+
+    def image(self):
+        return self.m.view_image()
+
+
+class ExportSource:
+    """What the viewer on Review shows: your exported (graded) frames, before and after Finish."""
+
+    def __init__(self, m):
+        self.m = m
+
+    frames = property(lambda self: self.m.export_view)
+    cursor = property(lambda self: self.m.export_cursor)
+    status = property(lambda self: self.m.export_view_status)
+    series = property(lambda self: self.m.finish_series)
+    steps = property(lambda self: ())
+    names = property(lambda self: [f.name for f in self.m.planned.frames] if self.m.planned else [])
+
+    def load(self):
+        self.m.load_export_view()
+
+    def set(self, frame):
+        self.m.set_export_cursor(frame)
+
+    def image(self):
+        return self.m.export_view_image()
+
+
 class SequenceView:
     """The viewer and timeline: the frame at the playhead above, the light over time below with keyframes as
-    diamonds (solid: labelled; outlined: suggested), the playhead as a dotted line. Click the timeline to move
-    the playhead (a diamond selects that keyframe); space plays, the arrows step (Shift: ten), K adds or removes
-    a keyframe at the playhead."""
+    diamonds (solid: labelled; outlined: suggested), the playhead as a dotted line, and a scrub bar to drag
+    through. Click the timeline to jump (a diamond selects that keyframe); space plays, the arrows step (Shift:
+    ten), K adds or removes a keyframe at the playhead."""
 
     WIDTH, LINE_H = 720, 110
     FPS = 24
     LOOP = 12                                           # frames either side of the playhead when looping
+    MODES = (("after", "After"), ("before", "Before"), ("wipe", "Wipe"), ("flicker", "Flicker ×5"))
 
-    def __init__(self, screen, keyframes: bool = True):
+    def __init__(self, screen, keyframes: bool = True, source=None):
         self.screen, self.m, self.ui = screen, screen.m, screen.ui
-        self.with_keyframes = keyframes                 # Grade: keyframes on; Prepare: the corrections only
-        w, h = self.m.view.size if self.m.view is not None else (3, 2)
+        self.src = source or RawSource(self.m)
+        self.with_keyframes = keyframes                 # Grade: keyframes on; Prepare and Review: not
+        w, h = self.src.frames.size if self.src.frames is not None else (3, 2)
         self.HEIGHT = round(self.WIDTH * h / w)
         self.picture = ft.RawImage(width=self.WIDTH, height=self.HEIGHT)
         self.line = ft.RawImage(width=self.WIDTH, height=self.LINE_H)
         self.line_box = ft.Container(self.line, width=self.WIDTH, height=self.LINE_H, on_tap_down=self._tapped)
+        self.scrub = ft.Slider(min=0, max=1, value=0, width=self.WIDTH, on_change=self._scrubbing,
+                               on_change_end=self._scrubbed, active_color=self.ui.t["text"])
         self.status = self.ui.text("", dim=True, size=13)
         self.label = self.ui.text("", size=14)
         self.controls = ft.Row(spacing=8, wrap=True)
+        self.help = self.ui.text("", dim=True, size=12)
         self.playing = False
         self.loop = False
         self._shown = self._line_key = None
@@ -444,14 +496,8 @@ class SequenceView:
         ui = self.ui
         return ft.Container(ft.Column([
             ft.Container(self.picture, bgcolor=ui.t["surround"], border_radius=2),
-            self.status,
-            self.line_box,
-            ft.Row([self.label], alignment=ft.MainAxisAlignment.START),
-            self.controls,
-            ui.text("Space plays, the arrow keys step a frame (with Shift, ten)"
-                    + (", K adds or removes a keyframe" if self.with_keyframes else "")
-                    + ". These are the RAW files with Prepare's corrections: your grade isn't in them.",
-                    dim=True, size=12)], spacing=8), width=self.WIDTH)
+            self.status, self.line_box, self.scrub, self.label, self.controls, self.help], spacing=6),
+            width=self.WIDTH)
 
     # --- drawing -----------------------------------------------------------------------------------------
 
@@ -463,53 +509,67 @@ class SequenceView:
 
     def line_image(self):
         from ..models.timeline import Theme
-        m, t = self.m, self.ui.t
-        series = m.prepare_series
-        if series is None and m.measured is None:
+        t, series = self.ui.t, self.src.series
+        if series is None:
             return None
-        measured, curve = series if series is not None else (m.measured, None)
+        measured, curve = series
         lines = [Series(measured, t["measured"], 1)] + ([Series(curve, t["curve"], 3)] if curve is not None else [])
         solid, ghosts = self._keys()
         theme = self.screen.view.chart_theme if self.screen.view is not None else Theme()
-        return render_timeline(lines, self.WIDTH, self.LINE_H, theme, steps=m.exposure_steps,
-                               flags=solid, ghosts=ghosts, current=m.cursor)
+        return render_timeline(lines, self.WIDTH, self.LINE_H, theme, steps=self.src.steps,
+                               flags=solid, ghosts=ghosts, current=self.src.cursor)
+
+    def _label(self) -> str:
+        names, i = self.src.names, self.src.cursor
+        if not names:
+            return ""
+        keys = [k["frame"] for k in (self.m.keyframes or [])] if self.with_keyframes else []
+        return f"{names[i]}  ·  frame {i + 1} of {len(names)}" + ("  ·  keyframe" if i in keys else "")
 
     def refresh(self) -> None:
-        m, ui = self.m, self.ui
-        seq = m.opened.seq
-        m.load_view()
-        self.status.value = m.view_status
-        self.status.visible = bool(m.view_status)
+        m, ui, src = self.m, self.ui, self.src
+        src.load()
+        self.status.value = src.status
+        self.status.visible = bool(src.status)
+        n = len(src.names)
+        self.scrub.max, self.scrub.divisions, self.scrub.value = max(1, n - 1), max(1, n - 1), src.cursor
+        self.label.value = self._label()
         keys = [k["frame"] for k in (m.keyframes or [])] if self.with_keyframes else []
-        here = m.cursor in keys
-        self.label.value = (f"{seq[m.cursor].name}  ·  frame {m.cursor + 1} of {len(seq)}"
-                            + ("  ·  keyframe" if here else ""))
 
         def mode_button(mode, words):
-            chosen = m.view_mode == mode
-            return (ui.primary if chosen else ui.secondary)(words, lambda e, md=mode: self._mode(md))
-        self.controls.controls = [
-            ui.primary("Pause" if self.playing else "Play", lambda e: self.play()),
-            ui.secondary("Loop: on" if self.loop else "Loop: off", lambda e: self._loop()),
-            mode_button("after", "After"), mode_button("before", "Before"), mode_button("wipe", "Wipe")]
+            return (ui.primary if m.view_mode == mode else ui.secondary)(words, lambda e, md=mode: self._mode(md))
+        self.controls.controls = [ui.primary("Pause" if self.playing else "Play", lambda e: self.play()),
+                                  ui.secondary("Loop: on" if self.loop else "Loop: off", lambda e: self._loop()),
+                                  *[mode_button(mode, words) for mode, words in self.MODES]]
         if self.with_keyframes:
+            here = src.cursor in keys
             self.controls.controls.append(ui.secondary("Remove keyframe (K)" if here else "Add keyframe here (K)",
                                                        lambda e: self._toggle_key()))
         if m.view_mode == "wipe":
             self.controls.controls.append(ft.Slider(min=0, max=1, value=m.wipe, width=200,
                                                     on_change=self._wiped, active_color=ui.t["text"]))
+        help_text = {"flicker": "Flicker ×5: each pixel against the same pixel in the frames around it, the "
+                                "difference magnified. Steady parts stay put; leftover flicker shimmers. Moving "
+                                "things smear, which is normal here.",
+                     "wipe": "Before on the left of the line, After on the right."}.get(m.view_mode, "")
+        source_note = ("Your exported frames: Before as exported, After with Finish's correction."
+                       if isinstance(src, ExportSource) else
+                       "The RAW files with Prepare's corrections: your grade isn't in them.")
+        self.help.value = " ".join(x for x in (help_text, "Space plays, the arrows step a frame (Shift: ten)"
+                                               + (", K adds or removes a keyframe" if self.with_keyframes else "")
+                                               + ". Drag the bar under the curve to scrub.", source_note) if x)
         self._draw()
 
     def _draw(self, picture_only: bool = False) -> None:
         if self.screen.view is None:
             return
-        m = self.m
-        key = (m.cursor, m.view_mode, round(m.wipe, 3), id(m.view), id(m.prepare_series))   # corrections too
-        line_key = (m.cursor, self._keys(), id(m.prepare_series), id(m.measured))
+        m, src = self.m, self.src
+        key = (src.cursor, m.view_mode, round(m.wipe, 3), id(src.frames), id(src.series))
+        line_key = (src.cursor, self._keys(), id(src.series))
 
         async def draw():
             if key != self._shown:
-                image = await asyncio.to_thread(m.view_image)
+                image = await asyncio.to_thread(src.image)
                 if image is not None:
                     self._shown = key
                     await self.picture.render(image)
@@ -523,16 +583,27 @@ class SequenceView:
     # --- acting ------------------------------------------------------------------------------------------
 
     def go(self, frame: int) -> None:
-        self.m.set_cursor(frame)
+        self.src.set(frame)
         self.refresh()
         if self.screen.view is not None:
             self.screen.view.page.update()
 
+    def _scrubbing(self, e) -> None:                    # dragging: the picture and label follow, the curve after
+        self.playing = False
+        self.src.set(int(round(float(e.control.value))))
+        self.label.value = self._label()
+        self._draw(picture_only=True)
+        if self.screen.view is not None:
+            self.screen.view.page.update()
+
+    def _scrubbed(self, e) -> None:
+        self.go(int(round(float(e.control.value))))
+
     def _tapped(self, e) -> None:
         from ..models.timeline import PAD, TOP, frame_at
-        n = len(self.m.opened.seq)
+        n = len(self.src.names)
         frame = frame_at(e.local_position.x, self.WIDTH, n)
-        if e.local_position.y <= TOP + 4:                     # on the diamonds' row: the nearest keyframe
+        if self.with_keyframes and e.local_position.y <= TOP + 4:   # on the diamonds' row: the nearest keyframe
             keys = [k["frame"] for k in (self.m.keyframes or [])]
             step = (self.WIDTH - 2 * PAD) / max(n - 1, 1)
             near = [k for k in keys if abs(k - frame) * step <= 8]
@@ -542,7 +613,7 @@ class SequenceView:
 
     def _mode(self, mode: str) -> None:
         self.m.view_mode = mode
-        self.go(self.m.cursor)
+        self.go(self.src.cursor)
 
     def _wiped(self, e) -> None:
         self.m.wipe = float(e.control.value)
@@ -550,11 +621,11 @@ class SequenceView:
 
     def _loop(self) -> None:
         self.loop = not self.loop
-        self.go(self.m.cursor)
+        self.go(self.src.cursor)
 
     def _toggle_key(self) -> None:
         self.m.toggle_keyframe_here()
-        self.go(self.m.cursor)
+        self.go(self.src.cursor)
 
     def on_key(self, e) -> None:
         key = (e.key or "").lower()
@@ -562,7 +633,7 @@ class SequenceView:
             self.play()
         elif key in ("arrow left", "arrow right"):
             self.playing = False
-            self.go(self.m.cursor + (1 if key == "arrow right" else -1) * (10 if e.shift else 1))
+            self.go(self.src.cursor + (1 if key == "arrow right" else -1) * (10 if e.shift else 1))
         elif key == "k" and self.with_keyframes:
             self._toggle_key()
 
@@ -571,13 +642,13 @@ class SequenceView:
             self.playing = False
             self.refresh()
             return
-        if self.m.view is None or self.screen.view is None:
+        if self.src.frames is None or self.screen.view is None:
             return
         self.playing = True
-        start, n = self.m.cursor, len(self.m.opened.seq)
+        start, n = self.src.cursor, len(self.src.names)
         first, last = (max(0, start - self.LOOP), min(n - 1, start + self.LOOP)) if self.loop else (0, n - 1)
         if not self.loop and start >= n - 1:
-            self.m.set_cursor(0)
+            self.src.set(0)
         self.refresh()
 
         async def run():
@@ -585,17 +656,18 @@ class SequenceView:
             tick = 1.0 / self.FPS
             while self.playing:
                 began = _time.perf_counter()
-                nxt = self.m.cursor + 1
+                nxt = self.src.cursor + 1
                 if nxt > last:
                     if not self.loop:
                         self.playing = False
                         break
                     nxt = first
-                self.m.set_cursor(nxt)
-                image = self.m.view_image()
+                self.src.set(nxt)
+                image = await asyncio.to_thread(self.src.image)
                 if image is not None:
                     await self.picture.render(image)
-                self.label.value = f"{self.m.opened.seq[nxt].name}  ·  frame {nxt + 1} of {n}"
+                self.label.value = self._label()
+                self.scrub.value = nxt
                 self.screen.view.page.update()
                 await asyncio.sleep(max(0.0, tick - (_time.perf_counter() - began)))
             self.refresh()
@@ -951,6 +1023,7 @@ class DoneScreen(Screen):
     def build(self):
         ui, m = self.ui, self.m
         self.flags = ft.Column(spacing=0)
+        self.seq = SequenceView(self, keyframes=False, source=ExportSource(m))
         self.refresh()
         video = m.finished.video
         return ft.Column([
@@ -960,6 +1033,8 @@ class DoneScreen(Screen):
                              ft.Row([ui.secondary("Show in folder", lambda e: open_path(video, select=True)),
                                      ui.primary("Play video", lambda e: open_path(video))], spacing=10)],
                             alignment=ft.MainAxisAlignment.SPACE_BETWEEN, wrap=True)) if video else ft.Container(),
+            ui.text("Your film, frame by frame", size=14),
+            ui.panel(self.seq.control()),
             *self._checks(),
             *self._strip(),
             ui.text("Frames worth a look", size=14), self.flags,
@@ -1027,8 +1102,16 @@ class DoneScreen(Screen):
         self.strip_view.src = await asyncio.to_thread(make)
         self.view.page.update()
 
+    def on_key(self, e):
+        self.seq.on_key(e)
+
+    def leave(self):
+        self.seq.playing = False
+
     def refresh(self):
         ui, m = self.ui, self.m
+        if getattr(self, "seq", None):
+            self.seq.refresh()
         items = m.worth_a_look
         if not items:
             self.flags.controls = [ui.text("Nothing stands out: no frame breaks away from its neighbours.",

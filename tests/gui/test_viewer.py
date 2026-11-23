@@ -91,3 +91,37 @@ def test_on_prepare_there_are_no_keyframe_controls(panel):
     assert not any("keyframe" in str(w).lower() for w in words)
     plain.on_key(types.SimpleNamespace(key="K", shift=False))
     assert calls == [] and plain._keys() == ((), ())
+
+
+def test_flicker_x5_magnifies_leftover_flicker_and_leaves_steady_frames_alone():
+    steady = [reduce(LINEAR[0], 1.0)] * 7
+    frames = SequenceFrames(steady)
+    assert np.abs(frames.image(3, "flicker").astype(int) - steady[3].astype(int)).max() <= 1
+    jumpy = list(steady)
+    jumpy[3] = reduce(LINEAR[0] * 2 ** 0.1, 1.0)                      # 0.1 stops too bright
+    shown = frames.__class__(jumpy).image(3, "flicker")
+    from harbium_timelapse.timeslice import from_display
+    mid = (LINEAR[0] > 0.01) & (LINEAR[0] < 0.08)                       # mid levels, clear of clipping and black
+    stops = np.median(np.log2(from_display(shown)[mid] / from_display(steady[3])[mid]))
+    assert 0.4 < stops < 0.6                                             # about five times the 0.1
+
+
+def test_the_review_viewer_matches_what_finish_writes():
+    from harbium_timelapse.finish import correct
+    from harbium_timelapse.tone import ToneShares
+    tone = ToneShares((-7.0, -4.0, -1.0), (0.8, 1.3, 2.0), (0, 2, 4))
+    exported = [reduce(x, 1.0) for x in LINEAR]
+    gains = np.array([[0.1, 0.05, -0.02], [-0.2, -0.25, -0.15], [0, 0, 0], [0.3, 0.3, 0.3], [-0.05, 0, 0.05]])
+    frames = SequenceFrames(exported, gains=gains, tone=tone)
+    for i in range(5):
+        written = correct(exported[i], gains[i], tone=tone)
+        assert np.abs(frames.image(i, "after").astype(int) - written.astype(int)).max() <= 1
+
+
+def test_the_scrub_bar_moves_the_playhead(panel):
+    view, m, _ = panel
+    drag = types.SimpleNamespace(control=types.SimpleNamespace(value=57.4))
+    view._scrubbing(drag)
+    assert m.cursor == 57 and "frame 58 of 130" in view.label.value
+    view._scrubbed(types.SimpleNamespace(control=types.SimpleNamespace(value=90)))
+    assert m.cursor == 90 and view.scrub.value == 90
