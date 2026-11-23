@@ -38,6 +38,14 @@ class RapidRAW(Editor):
             raise ValueError("\n".join(str(p) for p in blocking) + "\nNot changing anything until that's "
                              "sorted: the results would be wrong. (If you're sure, add --force.)")
 
+        if not dry_run:
+            from .keyframes import fill_missing
+            created = fill_missing(seq)
+            if created:
+                report.notes.append(f"Created edit files for {created} frames that had none, holding only the "
+                                    "correction: your grade reaches them when you blend keyframes. Undo removes "
+                                    "them again.")
+                report.problems = [p for p in report.problems if p.kind != "no_sidecar"]
         if white_balance:
             try:
                 wb = plan_white_balance(seq)
@@ -70,6 +78,8 @@ class RapidRAW(Editor):
                 "Your originals are untouched, and every edit file was backed up before it changed."]
 
     def undo(self, seq) -> int:
+        from .state import remove_created
         n = undo(seq.folder)
         undo_white_balance(seq)
+        remove_created(seq.folder)          # files it created go again, unless you've edited them since
         return n

@@ -123,13 +123,19 @@ def test_only_adjustments_change(sunset_folder):
 
 # --- with deflicker ---------------------------------------------------------
 
-def test_blend_uses_your_keyframe_exposure_not_deflickers(sunset_folder):
+def test_blend_uses_your_keyframe_exposure_and_keeps_deflickers_correction_on_top(sunset_folder):
+    """Blending used to wipe deflicker's corrections. They're a fixed number of stops on top of whatever
+    exposure you chose, so now your exposure is blended underneath and each correction stays."""
+    from harbium_timelapse.editors.rapidraw.state import read_ledger
     folder, images = sunset_folder
     apply(plan(load(folder), raw_brightness=sunset(60) + jitter(60)))
-    assert adjustment(images[30], "exposure") != 0.5         # deflicker added to it
+    applied = read_ledger(folder)[images[30].name]["applied"]
+    assert applied != 0
     blend(load(folder))
-    assert adjustment(images[30], "exposure") == 0.5         # back to your own value
-    assert not (folder / ".timelapse-core" / "rapidraw.json").exists()  # deflicker reset
+    entry = read_ledger(folder)[images[30].name]
+    assert entry["base"] == pytest.approx(0.5, abs=1e-4)                       # your own value underneath
+    assert entry["applied"] == pytest.approx(applied)                          # the correction kept
+    assert adjustment(images[30], "exposure") == pytest.approx(0.5 + applied, abs=1e-4)
 
 
 def test_deflicker_after_blend_builds_on_the_blended_exposure(sunset_folder):

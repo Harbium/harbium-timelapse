@@ -200,7 +200,9 @@ def undo_white_balance(seq: Sequence) -> int:
             data = read_sidecar(f.path)
             if data is None:
                 continue
-            data.setdefault("adjustments", {})["whiteBalance"] = entry["white_balance_before"]
+            if not isinstance(data.get("adjustments"), dict):
+                data["adjustments"] = {}
+            data["adjustments"]["whiteBalance"] = entry["white_balance_before"]
             write_sidecar(f.path, data)
             entry.pop("white_balance_before")       # forgotten only once the sidecar is back
             entry.pop("white_balance", None)

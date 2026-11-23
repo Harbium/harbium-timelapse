@@ -22,8 +22,8 @@ How each setting is blended:
 Ratings, labels and the EXIF copy are never changed: only ``adjustments``.
 Untouched originals are kept, and ``restore`` puts them back.
 
-Blending resets deflicker. Exposure becomes the blend of your keyframes'
-own exposures, so run deflicker again afterwards.
+Blending keeps deflicker's corrections: your keyframes' own exposures are
+blended underneath, and each frame's correction stays on top.
 """
 
 from __future__ import annotations
@@ -148,20 +148,23 @@ def blend(seq: Sequence, label: str = KEYFRAME_LABEL) -> BlendResult:
             if data is None:
                 data = minimal_sidecar()             # no edit file yet: RapidRAW's own format, settings below
                 created += 1
+            adj = copy.deepcopy(adj)
             if f.name in steady_wb:          # white balance set by the white-balance command stays
-                adj = {**adj, "whiteBalance": steady_wb[f.name]["white_balance"]}
+                adj["whiteBalance"] = steady_wb[f.name]["white_balance"]
+            # Prepare's correction stays on top: it's a fixed number of stops added to whatever exposure you
+            # chose, so it doesn't depend on your grade. Your blended exposure becomes the new base under it.
+            entry = ledger.get(f.name)
+            applied = float((entry or {}).get("applied", 0.0))
+            base = get_exposure({"adjustments": adj})
+            set_exposure({"adjustments": adj}, base + applied)
             if data.get("adjustments") != adj:
                 keep_original(f.path)
                 data["adjustments"] = adj
                 write_sidecar(f.path, data)
                 changed += 1
-            # This frame now holds the blend, so no deflicker is on it any more. Recorded
-            # per frame, so an interrupted blend leaves an honest record.
-            wb = {k: v for k, v in steady_wb.get(f.name, {}).items() if k.startswith("white_balance")}
-            if wb:
-                ledger[f.name] = {"base": round(get_exposure(data), 4), "applied": 0.0, **wb}
-            else:
-                ledger.pop(f.name, None)
+            # Recorded per frame, so an interrupted blend leaves an honest record.
+            if entry is not None:
+                ledger[f.name] = {**entry, "base": round(base, 4), "applied": applied}
     (seq.folder / STATE_DIR / "refine.json").unlink(missing_ok=True)
     return BlendResult([seq[i].name for i in keys], changed, held, created)
 
@@ -310,3 +313,21 @@ def _close(a, b) -> bool:
     if isinstance(a, list) and isinstance(b, list):
         return len(a) == len(b) and all(_close(x, y) for x, y in zip(a, b))
     return a == b
+
+
+
+def fill_missing(seq: Sequence) -> int:
+    """Give every frame with no edit file a minimal one, so Prepare has somewhere to put its correction:
+    RapidRAW's own format with no settings of anyone's (adjustments empty; the correction is written next).
+    Nobody's grade is copied: in-between frames get yours when you blend keyframes. Returns files created."""
+    from .sidecar import sidecar_path
+    from .state import note_created
+    created = 0
+    for f in seq:
+        if read_sidecar(f.path) is None:
+            data = minimal_sidecar()
+            data["adjustments"] = {}
+            write_sidecar(f.path, data)
+            note_created(seq.folder, sidecar_path(f.path))
+            created += 1
+    return created

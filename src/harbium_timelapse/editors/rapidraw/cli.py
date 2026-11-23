@@ -276,7 +276,7 @@ def _keyframes(seq, args, problems) -> int:
     print(f"  Updated {result.changed} frames" +
           (f", creating edit files for {result.created} that had none." if result.created else "."))
     _report_held(result.held)
-    print("  Deflicker was reset by this. Next: timelapse-rapidraw deflicker FOLDER")
+    print("  Deflicker's corrections are kept on top of the blend.")
     print(f"  {CLOSE_FIRST}")
     return 0
 

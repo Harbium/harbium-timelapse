@@ -494,7 +494,8 @@ class AppModel:
         self.project.reach("prepared")
         self.project.save()
         self.export_since = self.clock()
-        self._notice(f"Corrections applied to {report.changed} frames.")
+        created = next((n for n in report.notes if n.startswith("Created edit files")), "")
+        self._notice(f"Corrections applied to {report.changed} frames." + (f" {created}" if created else ""))
         self.screen = "grade"
 
     def undo(self) -> None:
