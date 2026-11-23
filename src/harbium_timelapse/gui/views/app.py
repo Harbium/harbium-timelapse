@@ -935,10 +935,13 @@ class View:
             self.job_text.value = f"{m.job.name}: {m.job.text}"
             self.job_bar.value = m.job.fraction
             self.cancel_btn.disabled = m.job.cancelling
-        if m.screen != self.screen_name:
+        # Rebuild on a new screen, or on the same screen with a newly opened folder (choosing an editor reopens
+        # the folder on the Folder screen: a refresh alone left the old cards showing).
+        if m.screen != self.screen_name or m.opened is not getattr(self, "opened_shown", None):
             if self.screen is not None:
                 self.screen.leave()
             self.screen_name = m.screen
+            self.opened_shown = m.opened
             self.screen = SCREENS[m.screen](self)
             self.body.content = self.screen.build()
         else:

@@ -76,3 +76,20 @@ def test_levels_carrying_more_of_the_flicker_are_flagged_as_under_corrected():
         rec.after.append(before)
     finding = check_tones(rec, flicker)
     assert finding.kind == "look" and "more of the flicker" in finding.title and "contrast" in finding.fix
+
+
+def test_dither_in_deep_shadows_is_not_read_as_flicker_after_correction():
+    """Regression: after a tone-aware finish, the check reported shadows 0.132 -> 0.211 stops while the film's
+    shadows wobbled only 0.014-0.026: dither (+-1 level) at levels of 1-3 out of 255 read as flicker."""
+    from harbium_timelapse.diagnose import check_tones_after
+    from harbium_timelapse.tone import ToneShares
+    rng2 = np.random.default_rng(4)
+    dark = np.exp(rng2.uniform(np.log(0.0006), np.log(0.5), scene.shape))   # down to 1-3 levels of 255 in sRGB
+    rec = Recorder()
+    for f in flicker:
+        rec.before.append((dark * 2 ** f).astype(np.float32))
+        srgb = np.clip(dark ** (1 / 2.2) * 255 + rng2.triangular(-1, 0, 1, dark.shape), 0, 255).round() / 255
+        rec.after.append((srgb ** 2.2).astype(np.float32))              # steady, then dithered and rounded
+    finding = check_tones_after(rec, ToneShares((-8.0, -1.0), (1.2, 1.0), (0, 4)))
+    pairs = [part.split(" ")[-3:] for part in finding.detail.split(": ", 2)[-1].rstrip(".").split(", ")]
+    assert all(float(after) < float(before) for before, _, after in pairs), finding.detail

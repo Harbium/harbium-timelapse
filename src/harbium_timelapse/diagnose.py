@@ -214,8 +214,11 @@ def check_tones_after(rec: Recorder, tone) -> Finding:
     for i, (name, _, _) in enumerate(BANDS):
         mask = still & (ref >= edges[2 * i]) & (ref < edges[2 * i + 1])
         if mask.sum() >= 20:
-            words.append(f"{name} {jitter(np.median(b[:, mask], axis=1)):.3f} → "
-                         f"{jitter(np.median(a[:, mask], axis=1)):.3f}")
+            # Average the light, then take stops: dither (tiny noise added before rounding, zero on average) is a
+            # big relative change at levels of 1-3 out of 255, and a middle value of per-pixel stops read it as
+            # flicker (James's sunset: shadows "0.132 -> 0.211" while the film's shadows wobbled 0.014-0.026).
+            level = lambda x: np.log2(np.mean(2.0 ** x[:, mask], axis=1))     # noqa: E731
+            words.append(f"{name} {jitter(level(b)):.3f} → {jitter(level(a)):.3f}")
     return Finding("ok", "Tones: corrected level by level",
                    tone.describe() + (" Wobble per level (stops), before → after: " + ", ".join(words) + "."
                                       if words else ""), fix="Nothing to fix.")
