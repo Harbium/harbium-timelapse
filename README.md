@@ -37,21 +37,21 @@ If `prepare` doesn't support your editor yet, you can still use the tool: grade 
 
 The deflicker doesn't need keyframes. It measures how bright every frame is and fits a smooth curve through the whole sequence, so the slow change in the light (sunset into night, say) is kept and the frame-to-frame jitter is removed. Exposure changes you made while shooting are found automatically and blended into a gentle ramp. White balance is smoothed the same way.
 
-Keyframes are for when you want your grade to change over the sequence, for example a warmer look in daylight and a cooler, darker one at night. In RapidRAW, give a few frames the purple colour label, edit those frames, and the tool blends every setting across the frames in between:
+Keyframes are for when you want your grade to change over the sequence, for example a warmer look in daylight and a cooler, darker one at night. In the app, the Grade screen suggests keyframes, labels them purple in RapidRAW for you, and after you've graded them, blends every setting across the frames in between. From the command line:
 
 ```bash
-timelapse-rapidraw suggest-keyframes FOLDER   # optional: suggests where the light changes most
-timelapse-rapidraw keyframes FOLDER           # blend between your purple frames
-timelapse prepare FOLDER                      # then white balance and deflicker on top
+timelapse-rapidraw suggest-keyframes FOLDER --label   # suggests where the light changes, labels them purple
+timelapse-rapidraw keyframes FOLDER                   # blend between your purple frames
 ```
 
-Do the keyframe blend before `prepare`, because blending resets the deflicker. There's more detail in [docs/RAPIDRAW.md](docs/RAPIDRAW.md).
+The folder doesn't need any RapidRAW edit files first: the tool creates the ones it needs, in RapidRAW's own format, and never copies one frame's grade onto another. Deflicker's corrections are kept on top of the blend, so the order doesn't matter. There's more detail in [docs/RAPIDRAW.md](docs/RAPIDRAW.md).
 
 ## What it can handle
 
 - Checking a folder before doing anything, for things like missing frames, RAW and JPEG files mixed together, shots from two cameras, setting changes, and frames that are completely black or blown out.
 - Frames that are randomly a touch brighter or darker, and the bigger steps you introduce yourself by changing ISO or shutter speed or turning an ND filter. ND changes aren't recorded in the file, so it finds those from the pictures.
-- Auto white balance that wanders from frame to frame.
+- Auto white balance that wanders from frame to frame (and white balance you set yourself, or a camera fixed at one setting, is left alone).
+- Grades that stretch some levels more than others. Strong contrast, an S-curve, glow or halation make the sky flicker more than the street; `finish` measures how strongly each brightness level carries the flicker and corrects each level by its own share.
 - People, cars, birds and light trails moving through the shot. Brightness is measured on the parts of the scene that stay still, so a crowd walking past won't make it think the whole frame got darker.
 - Parts of the scene changing on their own, like clouds drifting over the sky or lights coming on in a building. Real flicker changes every part of the picture by the same amount, so each frame is measured region by region and a sky doing its own thing gets outvoted.
 - Interruptions. Your original photos are never changed, edit files are backed up before their first change, a run that gets interrupted can simply be run again, and it won't write anything while your editor is open.
@@ -137,7 +137,9 @@ Lightroom support is new and hasn't been tried inside Lightroom itself yet, so p
 - Testing on more footage: sunrises, fixed white balance, other cameras
 - Confirming Lightroom support with real Lightroom users, then white balance for Lightroom
 - RawTherapee and darktable support
-- A simple app with an installer, with ExifTool and ffmpeg included
+- Light events (headlights into the lens, a flash) left alone rather than corrected as flicker
+- Exporting from RapidRAW automatically, so the app goes straight from blending to finishing
+- The app's installer, with ExifTool and ffmpeg included
 - Better handling of very large ND filter changes in `finish`
 - Hyperlapse support (lining frames up before measuring them)
 - Motion blur between frames

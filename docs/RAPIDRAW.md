@@ -39,29 +39,37 @@ timelapse-rapidraw export ~/Pictures/sunset ~/Pictures/sunset-render
 ## Day to night: keyframes
 
 When the look needs to change through the sequence (white balance, contrast,
-shadows), edit a few keyframes and let the rest be blended.
+shadows), grade a few keyframes and let the rest be blended. In the app this
+is the Keyframes panel on the Grade screen; from the command line:
 
 ```bash
 timelapse-rapidraw suggest-keyframes ~/Pictures/sunset --label   # labels them purple
-# in RapidRAW: edit each purple frame however you like, then close the folder
+# in RapidRAW: filter by purple, grade each keyframe, then close RapidRAW
 timelapse-rapidraw keyframes ~/Pictures/sunset                   # blends every setting
-timelapse-rapidraw deflicker ~/Pictures/sunset                   # then deflicker on top
 ```
 
 Keyframes are suggested where the light itself changes (about a stop dimmer,
 or noticeably warmer or bluer), not where you moved your exposure. Move, add
 or remove purple labels as you like: the suggestions are only a start.
 
+**No edit files needed first.** RapidRAW (1.6.3 on) only writes an `.rrdata`
+once a frame is edited, so a fresh folder has none. Labelling creates a
+label-only file for each keyframe (exactly what RapidRAW writes itself), and
+blending creates every in-between frame's file from your keyframes' files.
+Nobody's grade is copied anywhere: in-between frames get yours by blending.
+
 `keyframes` **replaces** the edit on every frame between keyframes. Settings
 that can't be blended (on/off switches, the tone mapper, masks shaped
-differently) are held from one keyframe to the next and listed. To put
-every sidecar back as it was before this tool changed it:
+differently) are held from one keyframe to the next and listed. Deflicker's
+corrections are **kept on top** of the blend, so deflicker before or after
+keyframing, as you like. To put every sidecar back as it was before this tool
+changed it:
 
 ```bash
 timelapse-rapidraw restore ~/Pictures/sunset
 ```
 
-Reopen the folder in RapidRAW to see the new exposures.
+Reopen the folder in RapidRAW to see the changes.
 
 ## Check against a render: refine
 
