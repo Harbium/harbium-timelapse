@@ -488,8 +488,8 @@ class AppModel:
             return ""
         measured, target = series
         biggest = float(np.nanmax(np.abs(self.preview.deflicker.exposure)))
-        return (f"Frame-to-frame wobble {_wobble(measured):.3f} stops now, {_wobble(target):.3f} after. "
-                f"Largest correction {biggest:.2f} stops.")
+        return (f"Flicker: {_wobble(measured):.3f} stops now, {_wobble(target):.3f} after.\n"
+                f"Largest correction: {biggest:.2f} stops.")
 
     @property
     def needs_metadata_saved(self) -> bool:
@@ -1015,7 +1015,9 @@ class AppModel:
             for i, f in enumerate(seq):
                 frames.append(reduce(previews.load_small(f.path, WIDTH * 5 // 4), scale))
                 hook(len(seq) + i + 1, 2 * len(seq))
-            return SequenceFrames(frames)
+            out = SequenceFrames(frames)
+            out.scale = scale                     # kept for sharp single frames in full screen
+            return out
 
         def event(e):
             if isinstance(e, Progress):
@@ -1116,3 +1118,40 @@ class AppModel:
         if self.export_view is None:
             return None
         return self.export_view.image(self.export_cursor if frame is None else frame, self.view_mode, self.wipe)
+
+    # --- sharp single frames, for full screen when not playing ----------------------------------------------
+
+    SHARP = 1600
+
+    def view_sharp(self, frame: int | None = None):
+        """The frame at full preview size (1,600 px), as the viewer would show it; None when it can't be."""
+        from ... import previews
+        from .viewer import SequenceFrames, reduce
+        if self.view is None or self.view_mode == "flicker":
+            return None
+        i = self.cursor if frame is None else frame
+        linear = previews.load_small(self.opened.seq[i].path, self.SHARP)
+        if linear is None:
+            return None
+        one = SequenceFrames([reduce(linear, getattr(self.view, "scale", 1.0), width=self.SHARP)],
+                            gains=[self.view.gains[i]])
+        return one.image(0, self.view_mode, self.wipe)
+
+    def export_view_sharp(self, frame: int | None = None):
+        if self.export_view is None or self.view_mode == "flicker" or self.planned is None:
+            return None
+        from PIL import Image
+
+        from .viewer import SequenceFrames
+        i = self.export_cursor if frame is None else frame
+        try:
+            with Image.open(self.planned.frames[i]) as im:
+                im.draft("RGB", (self.SHARP, self.SHARP))
+                im = im.convert("RGB")
+                if im.size[0] > self.SHARP:
+                    im = im.resize((self.SHARP, max(1, round(im.size[1] * self.SHARP / im.size[0]))), Image.BILINEAR)
+                picture = np.ascontiguousarray(np.asarray(im))
+        except OSError:
+            return None
+        one = SequenceFrames([picture], gains=[self.export_view.gains[i]], tone=self.export_view.tone)
+        return one.image(0, self.view_mode, self.wipe)

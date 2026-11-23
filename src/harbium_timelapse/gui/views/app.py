@@ -66,12 +66,16 @@ class UI:
 
     def __init__(self, tokens: dict):
         self.t = tokens
+        self.scale = 1.12                 # text size: a little larger than the design sizes, growing with the window
+
+    def px(self, size: float) -> int:
+        return int(round(size * self.scale))
 
     def title(self, text: str, size: int = 32) -> ft.Text:
-        return ft.Text(text, font_family=DISPLAY, size=size, color=self.t["text"], weight=ft.FontWeight.W_500)
+        return ft.Text(text, font_family=DISPLAY, size=self.px(size), color=self.t["text"], weight=ft.FontWeight.W_500)
 
     def text(self, text: str, dim: bool = False, size: int = 15, mono: bool = False, selectable=False) -> ft.Text:
-        return ft.Text(text, font_family=MONO if mono else BODY, size=size - (1 if mono else 0),
+        return ft.Text(text, font_family=MONO if mono else BODY, size=self.px(size - (1 if mono else 0)),
                        color=self.t["dim" if dim else "text"], selectable=selectable)
 
     def primary(self, label: str, on_click, disabled: bool = False) -> ft.FilledButton:
@@ -79,14 +83,16 @@ class UI:
         return ft.FilledButton(label, on_click=on_click, disabled=disabled, style=ft.ButtonStyle(
             bgcolor={ft.ControlState.DEFAULT: t["primary_bg"], ft.ControlState.DISABLED: t["line"]},
             color={ft.ControlState.DEFAULT: t["primary_text"], ft.ControlState.DISABLED: t["dim"]},
-            shape=ft.RoundedRectangleBorder(radius=2), padding=ft.Padding(18, 14, 18, 14)))
+            shape=ft.RoundedRectangleBorder(radius=2), padding=ft.Padding(18, 14, 18, 14),
+            text_style=ft.TextStyle(size=self.px(14), font_family=BODY)))
 
     def secondary(self, label: str, on_click, disabled: bool = False) -> ft.OutlinedButton:
         t = self.t
         return ft.OutlinedButton(label, on_click=on_click, disabled=disabled, style=ft.ButtonStyle(
             color={ft.ControlState.DEFAULT: t["text"], ft.ControlState.DISABLED: t["dim"]},
             shape=ft.RoundedRectangleBorder(radius=2),
-            side=ft.BorderSide(1, t["line"]), padding=ft.Padding(16, 14, 16, 14)))
+            side=ft.BorderSide(1, t["line"]), padding=ft.Padding(16, 14, 16, 14),
+            text_style=ft.TextStyle(size=self.px(14), font_family=BODY)))
 
     def panel(self, content, padding: int = 16) -> ft.Container:
         return ft.Container(content, bgcolor=self.t["panel"], padding=padding, border_radius=2,
@@ -101,6 +107,14 @@ class UI:
 # --- the screens ---------------------------------------------------------------------------------
 
 class Screen:
+    def columns(self, side: int = 360) -> tuple[int, int, bool]:
+        """(side width, main width, side by side?): two columns when there's room for the main one to be at
+        least 640 wide, otherwise one column using the full width."""
+        width, side = self.view.content_width, self.ui.px(side)
+        if width - side - 32 >= 640:
+            return side, width - side - 32, True
+        return width, width, False
+
     def __init__(self, view: "View"):
         self.view, self.m, self.ui = view, view.model, view.ui
 
@@ -119,7 +133,9 @@ class SlicePanel:
     WIDTH = 784                     # the same width as the timeline panel, so the page never wraps
     EACH = 372
 
-    def __init__(self, screen: Screen, words: str):
+    def __init__(self, screen: Screen, words: str, width: int | None = None):
+        if width:
+            self.WIDTH, self.EACH = int(width), max(120, (int(width) - 40) // 2)
         self.screen, self.m, self.ui = screen, screen.m, screen.ui
         self.before = ft.Image(src=b"", width=self.EACH, fit=ft.BoxFit.CONTAIN, visible=False)
         self.after = ft.Image(src=b"", width=self.EACH, fit=ft.BoxFit.CONTAIN, visible=False)
@@ -145,8 +161,8 @@ class SlicePanel:
                               value=self.m.slice_mode, width=230, dense=True,
                               on_select=lambda e: self.m.set_slice_mode(e.control.value))
         return ft.Container(ui.panel(ft.Column(
-            [ft.Row([ui.text("Time slice: the scene, with time running", dim=True, size=13), chooser], spacing=8),
-             ui.text(self.words + " Click a picture to see it full screen.", dim=True, size=12), self.status,
+            [ft.Row([ui.text("Time slice", dim=True, size=13), chooser], spacing=8),
+             ui.text(self.words + " Click a picture to enlarge it.", dim=True, size=13), self.status,
              self.progress,
              ft.Container(ft.Row([side("Before", self.before), side("After", self.after)], spacing=8),
                           bgcolor=ui.t["surround"], padding=6, border_radius=2)], spacing=6), padding=12),
@@ -300,8 +316,7 @@ class StartScreen(Screen):
             on_click=lambda e, f=r["folder"]: self.m.open_folder(f), ink=True) for r in self.m.recent]
         return ft.Column([
             ui.title("Open a timelapse"),
-            ui.text("Choose the folder with your RAW frames, or an export to finish. Nothing in it changes "
-                    "until you say so.", dim=True),
+            ui.text("Choose a folder of RAW frames, or of exported frames to finish.", dim=True),
             ft.Container(height=8),
             ft.Row([ui.primary("Choose folder", self.choose)]),
             ft.Container(height=24),
@@ -347,10 +362,10 @@ class FolderScreen(Screen):
         resume = []
         if m.resume:
             where, words = m.resume
-            resume = [ui.panel(ft.Row([ui.text(words), ui.secondary("Carry on from there", lambda e: m.go(where))],
+            resume = [ui.panel(ft.Row([ui.text(words), ui.secondary("Continue", lambda e: m.go(where))],
                                       alignment=ft.MainAxisAlignment.SPACE_BETWEEN))]
         return ft.Column([ui.title(Path(m.opened.seq.folder).name, 30), facts, *resume,
-                          ui.text("Folder check", size=14), *cards, ft.Row(actions, alignment=ft.MainAxisAlignment.END)],
+                          ui.text("Checks", size=14), *cards, ft.Row(actions, alignment=ft.MainAxisAlignment.END)],
                          spacing=14, width=900)
 
 
@@ -359,7 +374,9 @@ class PrepareScreen(Screen):
 
     def build(self):
         ui, m = self.ui, self.m
-        self.seq = SequenceView(self, keyframes=False)
+        side_w, main_w, two = self.columns(380)
+        self.seq = SequenceView(self, keyframes=False, width=main_w - 26,
+                                picture_height=self.view.content_height - self.ui.px(400))
         self.summary = ui.text("", dim=True, size=14)
         self.notes = ft.Column(spacing=4)
         self.apply_btn = ui.primary("Apply corrections", lambda e: m.apply())
@@ -367,12 +384,11 @@ class PrepareScreen(Screen):
         self.slider = ft.Slider(min=7, max=61, divisions=27, value=m.window, label="{value} frames",
                                 on_change=lambda e: m.set_window(int(e.control.value)), expand=True)
         side = [ui.title("Prepare"),
-                ui.text("The light as measured from your RAW files, and the smooth curve the corrections "
-                        "will follow. Nothing changes until you apply.", dim=True, size=14)]
+                ui.text("Steady the light in your RAW files before you grade.", dim=True, size=14)]
         if m.white_balance_available:
             side.append(ft.Switch(label="Steady the camera's auto white balance", value=m.white_balance,
                                   on_change=lambda e: m.set_white_balance(e.control.value)))
-        side += [ui.text("Smoothness: play the sequence and drag this to see what it does", size=14),
+        side += [ui.text("Smoothness", size=14),
                  ft.Row([ui.text("Steady", dim=True, size=13), self.slider, ui.text("Follows\nthe light", dim=True,
                                                                                        size=13)], spacing=4)]
         if m.needs_metadata_saved:
@@ -385,16 +401,14 @@ class PrepareScreen(Screen):
                  ft.Row([ui.secondary("Undo", lambda e: m.undo()), self.apply_btn], spacing=10)]
         self._drawn = None
         self.refresh()
-        self.slice = SlicePanel(self, "Each frame gives one part of the picture (a band, ring or wedge). A frame that jumps shows "
-                                      "lighter or darker than its neighbours; after the corrections it should all fade "
-                                      "smoothly. A rough guide from the RAW files, before your grade.")
+        self.slice = SlicePanel(self, "Each frame gives one strip of the picture. After should change smoothly.",
+                                width=main_w)
         self.slice.refresh()
-        return ft.Row([ft.Column(side, spacing=12, width=380),
-                       ft.Column([ui.panel(ft.Column([ui.text("Your sequence as the corrections will leave it; below, "
-                                                              "the light (stops): measured, and the smoothing curve",
-                                                              dim=True, size=13), self.seq.control()], spacing=8),
-                                           padding=12), self.slice.control()], spacing=16)],
-                      spacing=28, vertical_alignment=ft.CrossAxisAlignment.START, wrap=True)
+        main = ft.Column([ui.panel(self.seq.control(), padding=12), self.slice.control()], spacing=16, width=main_w)
+        side_col = ft.Column(side, spacing=12, width=side_w)
+        if two:
+            return ft.Row([side_col, main], spacing=32, vertical_alignment=ft.CrossAxisAlignment.START)
+        return ft.Column([side_col, main], spacing=24)
 
     def refresh(self):
         m, ui = self.m, self.ui
@@ -438,6 +452,9 @@ class RawSource:
     def image(self):
         return self.m.view_image()
 
+    def sharp(self):
+        return self.m.view_sharp()
+
 
 class ExportSource:
     """What the viewer on Review shows: your exported (graded) frames, before and after Finish."""
@@ -461,6 +478,42 @@ class ExportSource:
     def image(self):
         return self.m.export_view_image()
 
+    def sharp(self):
+        return self.m.export_view_sharp()
+
+
+class FullView:
+    """The viewer filling the window: the same sequence, playhead and mode, as large as the screen allows.
+    Esc or Close goes back."""
+    current = None
+
+    def __init__(self, view: "View", keyframes: bool, source):
+        self.view, self.keyframes, self.source = view, keyframes, source
+
+    def open(self) -> None:
+        FullView.current = self
+        page, ui = self.view.page, self.view.ui
+        width = max(480, int(page.width or 1400) - 48)
+        tall = max(240, int(page.height or 900) - ui.px(250))           # room for the timeline and controls
+        holder = type("Holder", (), {})()
+        holder.m, holder.ui, holder.view = self.view.model, ui, self.view
+        self.seq = SequenceView(holder, keyframes=self.keyframes, source=self.source, width=width,
+                                picture_height=tall, full=True)
+        self.layer = ft.Container(ft.Column([self.seq.control()], scroll=ft.ScrollMode.AUTO),
+                                  expand=True, bgcolor=ui.t["bg"], padding=24)
+        page.overlay.append(self.layer)
+        self.seq.refresh()
+        page.update()
+
+    def close(self, e=None) -> None:
+        self.seq.playing = False
+        if self.layer in self.view.page.overlay:
+            self.view.page.overlay.remove(self.layer)
+        FullView.current = None
+        if self.view.screen is not None:
+            self.view.screen.refresh()                   # the page's own viewer catches up with the playhead
+        self.view.page.update()
+
 
 class SequenceView:
     """The viewer and timeline: the frame at the playhead above, the light over time below with keyframes as
@@ -468,18 +521,24 @@ class SequenceView:
     through. Click the timeline to jump (a diamond selects that keyframe); space plays, the arrows step (Shift:
     ten), K adds or removes a keyframe at the playhead."""
 
-    WIDTH, LINE_H = 720, 110
+    LINE_H = 110
     FPS = 24
     LOOP = 12                                           # frames either side of the playhead when looping
     MODES = (("after", "After"), ("before", "Before"), ("wipe", "Wipe"), ("flicker", "Flicker ×5"))
 
-    def __init__(self, screen, keyframes: bool = True, source=None):
+    def __init__(self, screen, keyframes: bool = True, source=None, width: int = 720,
+                 picture_height: int | None = None, full: bool = False):
         self.screen, self.m, self.ui = screen, screen.m, screen.ui
         self.src = source or RawSource(self.m)
         self.with_keyframes = keyframes                 # Grade: keyframes on; Prepare and Review: not
+        self.full = full                                # filling the window (FullView)
+        self.WIDTH = int(width)
         w, h = self.src.frames.size if self.src.frames is not None else (3, 2)
-        self.HEIGHT = round(self.WIDTH * h / w)
-        self.picture = ft.RawImage(width=self.WIDTH, height=self.HEIGHT)
+        pw, ph = self.WIDTH, round(self.WIDTH * h / w)
+        if picture_height and ph > picture_height:      # never taller than the room there is
+            pw, ph = round(picture_height * w / h), int(picture_height)
+        self.HEIGHT = ph
+        self.picture = ft.RawImage(width=pw, height=ph)
         self.line = ft.RawImage(width=self.WIDTH, height=self.LINE_H)
         self.line_box = ft.Container(self.line, width=self.WIDTH, height=self.LINE_H, on_tap_down=self._tapped)
         self.scrub = ft.Slider(min=0, max=1, value=0, width=self.WIDTH, on_change=self._scrubbing,
@@ -487,7 +546,7 @@ class SequenceView:
         self.status = self.ui.text("", dim=True, size=13)
         self.label = self.ui.text("", size=14)
         self.controls = ft.Row(spacing=8, wrap=True)
-        self.help = self.ui.text("", dim=True, size=12)
+        self.help = self.ui.text("", dim=True, size=13)
         self.playing = False
         self.loop = False
         self._shown = self._line_key = None
@@ -495,7 +554,8 @@ class SequenceView:
     def control(self):
         ui = self.ui
         return ft.Container(ft.Column([
-            ft.Container(self.picture, bgcolor=ui.t["surround"], border_radius=2),
+            ft.Container(self.picture, bgcolor=ui.t["surround"], border_radius=2, width=self.WIDTH,
+                         alignment=ft.Alignment.CENTER),
             self.status, self.line_box, self.scrub, self.label, self.controls, self.help], spacing=6),
             width=self.WIDTH)
 
@@ -548,16 +608,16 @@ class SequenceView:
         if m.view_mode == "wipe":
             self.controls.controls.append(ft.Slider(min=0, max=1, value=m.wipe, width=200,
                                                     on_change=self._wiped, active_color=ui.t["text"]))
-        help_text = {"flicker": "Flicker ×5: each pixel against the same pixel in the frames around it, the "
-                                "difference magnified. Steady parts stay put; leftover flicker shimmers. Moving "
-                                "things smear, which is normal here.",
-                     "wipe": "Before on the left of the line, After on the right."}.get(m.view_mode, "")
-        source_note = ("Your exported frames: Before as exported, After with Finish's correction."
-                       if isinstance(src, ExportSource) else
-                       "The RAW files with Prepare's corrections: your grade isn't in them.")
-        self.help.value = " ".join(x for x in (help_text, "Space plays, the arrows step a frame (Shift: ten)"
-                                               + (", K adds or removes a keyframe" if self.with_keyframes else "")
-                                               + ". Drag the bar under the curve to scrub.", source_note) if x)
+        if self.full:
+            self.controls.controls.append(ui.secondary("Close full screen (Esc)", lambda e: FullView.current.close()))
+        else:
+            self.controls.controls.append(ui.secondary("Full screen", lambda e: self._full_screen()))
+        help_text = {"flicker": "Flicker ×5 magnifies any flicker left. Moving things smear.",
+                     "wipe": "Before on the left, After on the right."}.get(m.view_mode, "")
+        keys_text = "Space: play · ← →: step (Shift: 10)" + (" · K: keyframe" if self.with_keyframes else "")
+        source_note = ("Your export, before and after Finish." if isinstance(src, ExportSource) else
+                       "RAW preview with Prepare's corrections, without your grade.")
+        self.help.value = "   ".join(x for x in (help_text, source_note, keys_text) if x)
         self._draw()
 
     def _draw(self, picture_only: bool = False) -> None:
@@ -573,6 +633,10 @@ class SequenceView:
                 if image is not None:
                     self._shown = key
                     await self.picture.render(image)
+                if self.full and not self.playing and m.view_mode != "flicker":
+                    sharp = await asyncio.to_thread(src.sharp)       # stopped: the frame at full preview size
+                    if sharp is not None and key == self._shown and not self.playing:
+                        await self.picture.render(sharp)
             if not picture_only and line_key != self._line_key:
                 image = await asyncio.to_thread(self.line_image)
                 if image is not None:
@@ -610,6 +674,12 @@ class SequenceView:
             if near:
                 frame = min(near, key=lambda k: abs(k - frame))
         self.go(frame)
+
+    def _full_screen(self) -> None:
+        if self.screen.view is None:
+            return
+        self.playing = False
+        FullView(self.screen.view, self.with_keyframes, self.src).open()
 
     def _mode(self, mode: str) -> None:
         self.m.view_mode = mode
@@ -704,12 +774,10 @@ class KeyframesPanel:
         seq = m.opened.seq
         keys, state = m.keyframes or [], m.keyframes_state
         rows = [ui.text("Keyframes", size=17),
-                ui.text("Grade a few frames and the app carries every setting smoothly through all the frames "
-                        "between them.", dim=True, size=14)]
+                ui.text("Grade a few frames. The app blends every setting between them.", dim=True, size=14)]
         if not keys:
             rows.append(ft.Row([ui.primary("Suggest keyframes", lambda e: m.suggest_keyframes())]))
-            rows.append(ui.text("Or add your own in the viewer: K adds a keyframe at the playhead.", dim=True,
-                                size=13))
+            rows.append(ui.text("Or press K in the viewer to add one.", dim=True, size=13))
             self.body.controls = rows
             return
         for k in keys:
@@ -727,12 +795,10 @@ class KeyframesPanel:
         elif state == "labelled":
             stale = m.keyframes_out_of_date
             rows.append(ui.text(stale + " Blend again before exporting." if stale else
-                                "Grade just the purple frames in RapidRAW (filter by purple), close RapidRAW, "
-                                "then blend.", size=14))
+                                "Grade the purple frames in RapidRAW, close it, then blend.", size=14))
             rows.append(ft.Row([ui.primary("Blend between keyframes", lambda e: m.blend_keyframes())]))
         elif state == "blended":
-            rows.append(ui.text("Blended. Check a few frames in RapidRAW, then export every frame. Changed a "
-                                "keyframe's grade? Blend again.", size=14))
+            rows.append(ui.text("All frames are blended. If you change a keyframe, blend again.", size=14))
             rows.append(ft.Row([ui.secondary("Blend again", lambda e: m.blend_keyframes())]))
         self.body.controls = rows
 
@@ -747,22 +813,24 @@ class GradeScreen(Screen):
         self.refresh()
         steps = [ft.Container(ui.text(s, size=14), padding=ft.Padding(0, 10, 0, 10),
                               border=ft.Border(bottom=ft.BorderSide(1, ui.t["line"]))) for s in m.handoff_steps]
-        self.slice = SlicePanel(self, "What the applied corrections do to the light, from the RAW files (your "
-                                      "grade isn't in it). After should fade smoothly from band to band.")
+        side_w, main_w, two = self.columns(440)
+        self.slice = SlicePanel(self, "Each frame gives one strip of the picture. After should change smoothly.",
+                                width=side_w if two else main_w)
         self.slice.refresh()
         self.keys = KeyframesPanel(self) if m.keyframes_supported else None
         if self.keys:
             self.keys.refresh()
-        self.seq = SequenceView(self)
+        self.seq = SequenceView(self, width=main_w, picture_height=self.view.content_height - self.ui.px(380))
         self.seq.refresh()
-        return ft.Row([ft.Column([ui.title(f"Over to {editor}."),
-                                  ui.text("Grade the sequence however you like, then export every frame. "
-                                          "This screen notices when the export lands.", dim=True, size=14),
-                                  self.seq.control(),
-                                  *([ft.Container(self.keys.control(), width=SequenceView.WIDTH)] if self.keys else []),
-                                  *steps], spacing=8, width=SequenceView.WIDTH),
-                       ft.Column([ft.Container(ui.panel(self.watch), width=440), self.slice.control()], spacing=16)],
-                      spacing=32, vertical_alignment=ft.CrossAxisAlignment.START, wrap=True)
+        main = ft.Column([ui.title("Grade"),
+                          ui.text(f"Grade in {editor}, then export every frame.", dim=True, size=14),
+                          self.seq.control(), *([self.keys.control()] if self.keys else []),
+                          *([] if self.keys else steps)], spacing=8, width=main_w)
+        side_col = ft.Column([ui.panel(self.watch), self.slice.control()], spacing=16,
+                             width=side_w if two else main_w)
+        if two:
+            return ft.Row([main, side_col], spacing=32, vertical_alignment=ft.CrossAxisAlignment.START)
+        return ft.Column([main, side_col], spacing=24)
 
     def refresh(self):
         ui, m = self.ui, self.m
@@ -773,18 +841,17 @@ class GradeScreen(Screen):
         if getattr(self, "seq", None):
             self.seq.refresh()
         s = m.export or ExportStatus("waiting")
-        choose = ui.secondary("Choose folder instead", self.choose)
+        choose = ui.secondary("Choose a folder", self.choose)
         if s.state == "waiting":
-            self.watch.controls = [ui.text("Watching for a new export..."), choose]
+            self.watch.controls = [ui.text("Export", size=17),
+                                   ui.text("Export every frame into a new folder next to the RAW files. The app "
+                                           "picks it up when it's done.", dim=True, size=14), choose]
             if m.rapidraw_program is not None:
                 self.watch.controls = [
-                    ui.text("Export every frame", size=17),
-                    ui.text("RapidRAW renders each frame with your grade (JPEG, top quality) into a new folder next "
-                            "to the RAW files, then this goes straight on to Finish. About a minute for a few "
-                            "hundred frames on a good graphics card.", dim=True, size=14),
+                    ui.text("Export", size=17),
+                    ui.text("RapidRAW renders every frame into a new folder, then Finish opens.", dim=True, size=14),
                     ft.Row([ui.primary("Export with RapidRAW", lambda e: m.export_with_rapidraw()), choose],
-                           spacing=10),
-                    ui.text("Or export from RapidRAW yourself: this screen notices when it lands.", dim=True, size=13)]
+                           spacing=10, wrap=True)]
         elif s.state == "arriving":
             total = len(m.opened.seq)
             self.watch.controls = [ui.text(f"Export arriving: {s.frames} of {total} frames"),
@@ -792,18 +859,15 @@ class GradeScreen(Screen):
                                    ft.ProgressBar(value=min(1.0, s.frames / total), color=ui.t["text"],
                                                   bgcolor=ui.t["line"]), choose]
         else:
-            self.watch.controls = [ui.text(f"Found {s.frames} exported frames.", size=17),
+            self.watch.controls = [ui.text(f"Found {s.frames} exported frames", size=17),
                                    ui.text(str(s.folder), dim=True, mono=True, size=13),
-                                   ui.text("All there and nothing changing for a few seconds, so the export "
-                                           "looks complete.", dim=True, size=14),
-                                   ft.Row([ui.primary("Finish now", lambda e: m.use_export()),
+                                   ft.Row([ui.primary("Finish", lambda e: m.use_export()),
                                            *([ui.secondary("Export again with RapidRAW",
                                                            lambda e: m.export_with_rapidraw(replace=True))]
                                              if m.rapidraw_program is not None else []),
                                            choose], spacing=10, wrap=True),
-                                   *([ui.text("Blended again since? Export again replaces these frames with "
-                                              "fresh ones (nothing else in the folder is touched).", dim=True,
-                                              size=13)] if m.rapidraw_program is not None else [])]
+                                   *([ui.text("Export again replaces these frames.", dim=True, size=13)]
+                                     if m.rapidraw_program is not None else [])]
 
     async def poll(self):
         while self._polling:
@@ -829,7 +893,7 @@ class FinishScreen(Screen):
     """The export window: presets up front, every option one click away, checks before anything is written."""
 
     def build(self):
-        self.box = ft.Column(spacing=14, width=920)
+        self.box = ft.Column(spacing=14, width=min(1100, self.view.content_width))
         self.advanced_open = getattr(self, "advanced_open", False)
         self._version = None
         self.go_btn = None
@@ -873,7 +937,7 @@ class FinishScreen(Screen):
             "Your own preset." if current != "custom" else "Your own settings: save them as a preset below.")
 
         out = [ui.title("Export"),
-               ui.text("Smooths whatever flicker is left in your export, then writes the video, the frames, or both.",
+               ui.text("Smooth the flicker left in your export, then write the video, the frames, or both.",
                        dim=True, size=14),
                row("Exported frames", ui.text(m.project.export or "Not chosen yet", mono=True, size=14),
                    ui.secondary("Change", self.choose_export)),
@@ -1023,23 +1087,25 @@ class DoneScreen(Screen):
     def build(self):
         ui, m = self.ui, self.m
         self.flags = ft.Column(spacing=0)
-        self.seq = SequenceView(self, keyframes=False, source=ExportSource(m))
+        self.seq = SequenceView(self, keyframes=False, source=ExportSource(m),
+                                width=min(1100, self.view.content_width) - 34,
+                                picture_height=self.view.content_height - self.ui.px(380))
         self.refresh()
         video = m.finished.video
         return ft.Column([
-            ui.title("Finished."),
+            ui.title("Review"),
             *[ui.text(line, dim=True, size=14) for line in m.result_lines],
             ui.panel(ft.Row([ui.text(str(video), mono=True, size=14, selectable=True),
                              ft.Row([ui.secondary("Show in folder", lambda e: open_path(video, select=True)),
                                      ui.primary("Play video", lambda e: open_path(video))], spacing=10)],
                             alignment=ft.MainAxisAlignment.SPACE_BETWEEN, wrap=True)) if video else ft.Container(),
-            ui.text("Your film, frame by frame", size=14),
+            ui.text("Your film", size=17),
             ui.panel(self.seq.control()),
             *self._checks(),
             *self._strip(),
             ui.text("Frames worth a look", size=14), self.flags,
             ft.Row([ui.secondary("Open another folder", lambda e: m.go("start"))]),
-        ], spacing=14, width=900)
+        ], spacing=14, width=min(1100, self.view.content_width))
 
     def _checks(self) -> list:
         """What the checks found: what each means, and what to do about it."""
@@ -1065,7 +1131,7 @@ class DoneScreen(Screen):
                                             vertical_alignment=ft.CrossAxisAlignment.START),
                                      padding=ft.Padding(0, 10, 0, 10),
                                      border=ft.Border(bottom=ft.BorderSide(1, ui.t["line"]))))
-        return [ui.text("What the checks found", size=14), ft.Column(rows, spacing=0)]
+        return [ui.text("Checks", size=14), ft.Column(rows, spacing=0)]
 
     def _strip(self) -> list:
         """The time strip: a quick-to-load view to zoom and pan, and the full-detail file a click away."""
@@ -1076,9 +1142,7 @@ class DoneScreen(Screen):
         self.strip_view = ft.Image(src=b"", width=880, fit=ft.BoxFit.CONTAIN)
         self.view.page.run_task(self._load_strip)
         return [ui.text("Time slice", size=14),
-                ui.text("Your scene with time running through it: each frame gives one part of the picture (a band, "
-                        "ring or wedge). A frame that jumped shows lighter or darker than its neighbours; After should "
-                        "change evenly. Scroll to zoom, drag to look around.", dim=True, size=13),
+                ui.text("Each frame gives one strip of the picture. Jumps show as stripes.", dim=True, size=13),
                 ft.Container(ft.InteractiveViewer(content=self.strip_view, min_scale=1, max_scale=12,
                                                   boundary_margin=ft.Margin.all(40)),
                              bgcolor=ui.t["surround"], padding=8, border_radius=2, width=896, height=420,
@@ -1114,7 +1178,7 @@ class DoneScreen(Screen):
             self.seq.refresh()
         items = m.worth_a_look
         if not items:
-            self.flags.controls = [ui.text("Nothing stands out: no frame breaks away from its neighbours.",
+            self.flags.controls = [ui.text("No frames stand out.",
                                            dim=True, size=14)]
             return
         self.flags.controls = [ft.Container(
@@ -1142,14 +1206,49 @@ class View:
         page.services.append(self.picker)
         self.screen: Screen | None = None
         self.screen_name = None
+        self._fit()
         self._build_shell()
         model.subscribe(self.refresh)
         page.on_keyboard_event = self._key
+        page.on_resized = lambda e: page.run_task(self._resized)
+        self.refresh()
+
+    # --- the window's size ------------------------------------------------------------------------------
+
+    MARGIN = 64                                         # the page's margins, left and right together
+
+    def _fit(self) -> None:
+        """Text grows a little with the window: from 1.12x the design sizes up to 1.3x on a large screen."""
+        self.fitted = (int(self.page.width or 1400), int(self.page.height or 900))
+        self.ui.scale = min(1.3, max(1.12, 1.12 * self.fitted[0] / 1600))
+
+    @property
+    def content_width(self) -> int:
+        return max(360, int(self.page.width or 1400) - self.MARGIN)
+
+    @property
+    def content_height(self) -> int:
+        return max(400, int(self.page.height or 900))
+
+    async def _resized(self) -> None:
+        """Lay the screen out again for the new size, once the window has stopped changing."""
+        size = (int(self.page.width or 0), int(self.page.height or 0))
+        await asyncio.sleep(0.3)
+        if size != (int(self.page.width or 0), int(self.page.height or 0)) or size == self.fitted:
+            return
+        self._fit()
+        self.screen_name = None                          # rebuild the current screen at the new size
         self.refresh()
 
     def _key(self, e) -> None:
         if e.key == "Escape" and SliceViewer.current is not None:
             SliceViewer.current.close()
+            return
+        if FullView.current is not None:
+            if e.key == "Escape":
+                FullView.current.close()
+            else:
+                FullView.current.seq.on_key(e)
             return
         handler = getattr(self.screen, "on_key", None)
         if handler is not None and SliceViewer.current is None:
@@ -1229,6 +1328,9 @@ class View:
             self.cancel_btn.disabled = m.job.cancelling
         # Rebuild on a new screen, or on the same screen with a newly opened folder (choosing an editor reopens
         # the folder on the Folder screen: a refresh alone left the old cards showing).
+        if self.screen_name is None and self.screen is not None:
+            self.screen.leave()
+            self.screen = None
         if m.screen != self.screen_name or m.opened is not getattr(self, "opened_shown", None):
             if self.screen is not None:
                 self.screen.leave()

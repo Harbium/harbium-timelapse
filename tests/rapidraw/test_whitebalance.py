@@ -239,5 +239,5 @@ def test_a_fixed_camera_white_balance_is_left_alone(folder):
     seq = with_kelvin(load(path), np.full(150, 7345.0))
     before = [(read_sidecar(i).get("adjustments") or {}).get("whiteBalance") for i in images]
     report = RapidRAW().prepare(seq, window=25, raw_brightness=np.zeros(150))
-    assert any("stayed fixed" in n for n in report.notes)
+    assert any("fixed in the camera" in n for n in report.notes)
     assert [(read_sidecar(i).get("adjustments") or {}).get("whiteBalance") for i in images] == before

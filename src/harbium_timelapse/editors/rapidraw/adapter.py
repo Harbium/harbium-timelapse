@@ -50,14 +50,12 @@ class RapidRAW(Editor):
             try:
                 wb = plan_white_balance(seq)
                 if wb.biggest_jump_before < FIXED:
-                    report.notes.append(f"White balance: the camera's stayed fixed (about {wb.as_shot[0]:.0f} K), "
-                                        "so there's nothing to steady. Left as it is.")
+                    report.notes.append(f"White balance: fixed in the camera (about {wb.as_shot[0]:.0f} K), so there's nothing to steady.")
                 else:
                     report.notes.extend(f"White balance: {n}" for n in wb.notes)
                     report.notes.append(
-                        f"White balance: the camera's jumped by up to {wb.biggest_jump_before:.0f} K between frames; "
-                        f"steadied to at most {wb.biggest_jump_after:.0f} K. Keyframes and any white balance you "
-                        "set yourself are left alone.")
+                        f"White balance: steadied (the camera's jumped up to {wb.biggest_jump_before:.0f} K between "
+                        "frames). Keyframes and your own white balance are left alone.")
                     if not dry_run:
                         changed, kept = apply_white_balance(seq, wb)
                         if kept:

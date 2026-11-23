@@ -89,7 +89,7 @@ def test_prepare_measures_once_previews_then_applies_and_undoes(folder):
     m.go("prepare")
     until(lambda: m.preview is not None and not m.previewing)
     measured, curve = m.prepare_series
-    assert len(measured) == len(curve) == N and "wobble" in m.prepare_summary
+    assert len(measured) == len(curve) == N and "Flicker" in m.prepare_summary
     assert digest(folder) == before                                   # previewing writes nothing
     for w in (9, 15, 31, 45):                                          # a burst of slider moves
         m.set_window(w)
