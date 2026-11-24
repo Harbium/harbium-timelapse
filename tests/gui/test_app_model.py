@@ -252,6 +252,11 @@ def test_keyframes_suggest_adjust_label_and_blend_from_the_app(bare_raws):
     seq = m.opened.seq
     purple = [i for i, f in enumerate(seq) if "color:purple" in ((read_sidecar(f.path) or {}).get("tags") or [])]
     assert purple == chosen                                           # exactly the chosen frames
+    from harbium_timelapse.editors.rapidraw.sidecar import write_sidecar
+    for i in chosen:                                                  # graded in RapidRAW
+        data = read_sidecar(seq[i].path)
+        data["adjustments"] = {"exposure": 0.1 * i, "contrast": 10 + i}
+        write_sidecar(seq[i].path, data)
     m.blend_keyframes()
     m.wait()
     assert m.keyframes_state == "blended", m.message

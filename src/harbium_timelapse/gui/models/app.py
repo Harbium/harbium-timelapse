@@ -1028,7 +1028,9 @@ class AppModel:
             self.keyframes_off, self._export_warned = [], False
             held = ""
             if result.held:
-                held = " These change at each keyframe instead: " + ", ".join(sorted(result.held)) + "."
+                names = sorted(result.held)
+                held = (" These change at each keyframe instead: " + ", ".join(names[:6])
+                        + (f" and {len(names) - 6} more" if len(names) > 6 else "") + ".")
             self._notice(f"Blended {len(result.keyframes)} keyframes across {len(seq)} frames.{held}")
         self._run("Blending", lambda t: self.s.blend_keyframes(editor, seq), done)
 

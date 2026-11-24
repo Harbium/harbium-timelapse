@@ -45,3 +45,30 @@ def test_a_real_exposure_step_that_hits_regions_unevenly_is_still_measured():
     for later in (20, 25):
         step = err[later] - err[19]
         assert -1.35 < step < -0.95, step                     # ...it shows as the step: about a stop, never 0
+
+
+def structured_scene():
+    """A scene like a street at dusk: bright sky, mid-tone houses, a dark street, textured in patches."""
+    g = np.random.default_rng(3)
+    yy = np.linspace(0, 1, H)[:, None]
+    base = np.where(yy < 0.33, 0.45, np.where(yy < 0.6, 0.06, 0.006)) * np.ones((1, W))
+    return base * np.exp(g.normal(0, 0.3, (H // 8, W // 8))).repeat(8, 0).repeat(8, 1)
+
+
+@pytest.mark.parametrize("flare", [0.005, 0.02, 0.06, 0.15])
+def test_veiling_flare_across_the_whole_frame_is_left_alone(flare):
+    """Regression (James's sunset): headlights into the lens added light everywhere, the dark street +3-4
+    stops, the sky barely; measured as over-exposure, the whole frame was darkened and the sky came out 2-3
+    stops too dark. Added light moves dark regions far more than bright ones; exposure moves them all alike.
+    Flare here brightens the dark street by 0.6 to 4.1 stops."""
+    street = structured_scene()
+    chain = SteadyChain()
+    for i, f in enumerate(flicker):
+        img = street * 2 ** f
+        if i in (20, 21):
+            img = img + flare * np.linspace(0.3, 1.0, W)[None, :]      # stronger towards the light
+        chain.add(steady_input(np.clip(img * np.exp(rng.normal(0, 0.01, img.shape)), 0, 0.97)))
+    m = chain.series(np.zeros(N))
+    err = (m - m[0]) - (flicker - flicker[0])
+    assert np.abs(err[20:22]).max() < 0.1                       # during: within a tenth of a stop
+    assert np.abs(err[22:]).max() < 0.02                        # after: nothing carried forward

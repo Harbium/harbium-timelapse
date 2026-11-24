@@ -334,3 +334,21 @@ def test_blending_creates_every_missing_edit_file_with_every_setting(tmp_path):
     assert 4300 < middle["adjustments"]["whiteBalance"]["temperature"] < 6300
     assert "color:purple" not in (middle.get("tags") or [])                 # in-betweens aren't keyframes
     assert read_sidecar(tmp_path / "181A834.CR3")["adjustments"]["contrast"] == 10   # keyframes untouched
+
+
+def test_blending_refuses_a_keyframe_with_no_grade_and_names_it(tmp_path):
+    """Regression: one ungraded keyframe made every setting count as missing, and the app listed them all."""
+    import json
+    from pathlib import Path
+    from harbium_timelapse.editors.rapidraw.keyframes import blend, label_keyframes
+    from harbium_timelapse.editors.rapidraw.sidecar import write_sidecar
+    from harbium_timelapse.sequencer import load_sequence
+    real = json.loads((Path(__file__).parent / "fixtures" / "181A0968.CR3.rrdata").read_text(encoding="utf-8"))
+    for i in range(5):
+        (tmp_path / f"181A{834 + i}.CR3").write_bytes(b"")
+    graded = json.loads(json.dumps(real))
+    graded["tags"] = ["color:purple"]
+    write_sidecar(tmp_path / "181A834.CR3", graded)
+    label_keyframes(load_sequence(tmp_path), [4])                    # labelled, never graded
+    with pytest.raises(ValueError, match=r"181A838\.CR3 \(frame 5\) has no grade yet"):
+        blend(load_sequence(tmp_path))

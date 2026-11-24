@@ -157,22 +157,22 @@ def steady_change(previous: np.ndarray | None, current: np.ndarray) -> float | N
     still = ok & (np.abs(d - typical) < max(MOVER, 3 * spread))
     if still.sum() < MIN_STEADY_PIXELS:
         return None
-    votes = _regional_changes(previous, current, ok, d)
+    votes, levels = _regional_changes(previous, current, ok, d)
     if len(votes) >= MIN_VOTERS:
-        return _vote(votes)
+        return _vote(votes, levels)
     return float(np.log2(current[still].sum() / previous[still].sum()))
 
 
 def _regional_changes(previous: np.ndarray, current: np.ndarray, ok: np.ndarray,
-                      d: np.ndarray) -> list[tuple[float, int]]:
-    """Each region's change and how many pixels it measured it from.
+                      d: np.ndarray) -> tuple[list[tuple[float, int]], list[float]]:
+    """Each region's change and how many pixels it measured it from, and each region's brightness (stops).
 
     Movers are found within each region, against that region's own typical change: judged against the whole
     frame's, a light event flooding most of the frame made the regions it didn't reach look like movers, so
     they never got a vote."""
     rows, cols = REGIONS
     h, w = ok.shape[:2]
-    votes = []
+    votes, levels = [], []
     for r in range(rows):
         for c in range(cols):
             area = (slice(r * h // rows, (r + 1) * h // rows), slice(c * w // cols, (c + 1) * w // cols))
@@ -186,10 +186,19 @@ def _regional_changes(previous: np.ndarray, current: np.ndarray, ok: np.ndarray,
             n = int(m.sum())
             if n >= MIN_REGION_PIXELS and n >= MIN_REGION_SHARE * m.size:
                 votes.append((float(np.log2(current[area][m].sum() / previous[area][m].sum())), n))
-    return votes
+                # Its brightness without any added light: the dimmer of the two frames (light switching on or
+                # off, the region's own level either way).
+                levels.append(float(np.log2(min(previous[area][m].mean(), current[area][m].mean()) + 1e-9)))
+    return votes, levels
 
 
-def _vote(votes: list[tuple[float, int]]) -> float:
+ADDED_SLOPE = -0.2            # votes falling this steeply with brightness (stops per stop): light was added
+ADDED_SPREAD = 0.3            # ...and spread this widely (stops)
+ADDED_RANGE = 2.0             # ...across regions spanning at least this much brightness (stops)
+ADDED_FOLLOW = 0.6            # ...with the changes following brightness this closely (correlation)
+
+
+def _vote(votes: list[tuple[float, int]], levels: list[float] | None = None) -> float:
     """The frame's change from the regions' votes.
 
     Flicker changes every region alike, so the votes cluster. A light event (headlights into the lens, a flash,
@@ -198,6 +207,33 @@ def _vote(votes: list[tuple[float, int]]) -> float:
     from the group that changed least. On James's sunset, headlights flooding most of the frame were measured
     1.9 stops too bright, and the whole frame (sky included) was darkened to match. Without such a split, the
     plain weighted middle vote, exactly as before."""
+    if levels is not None and len(levels) == len(votes) >= MIN_VOTERS:
+        # Light added across the frame (veiling flare from headlights into the lens): it brightens dark regions
+        # by many stops and bright ones barely, so the votes fall steeply with brightness, unlike an exposure
+        # change, which moves every region by the same stops. The brightest regions tell the truth about the
+        # camera. On James's sunset the flare brightened dark areas 3-4 stops; measured as over-exposure, it
+        # darkened the whole frame, leaving the sky 2-3 stops too dark.
+        v, lv = np.array([x for x, _ in votes]), np.array(levels)
+        w = np.array([n for _, n in votes], dtype=np.float64)
+        spread = np.percentile(v, 90) - np.percentile(v, 10)
+        # Only where there's a line to fit: regions spanning real differences of brightness, with the changes
+        # clearly following it (not scattering around it).
+        if spread > ADDED_SPREAD and np.ptp(lv) >= ADDED_RANGE and abs(np.corrcoef(lv, v)[0, 1]) >= ADDED_FOLLOW:
+            slope = np.polyfit(lv, v, 1, w=np.sqrt(w))[0]
+            sign = 1.0 if np.median(v) >= 0 else -1.0       # light switching on (changes up) or off (down)
+            if sign * slope < ADDED_SLOPE:                    # changes shrink with brightness, either way
+                # Exposure x g and added light F take a region from L to g(L + F): its change, as a ratio, is
+                # g(1 + F/L), a straight line in 1/L. Where 1/L reaches 0 (a region so bright the added light
+                # is nothing to it) the line gives the camera's own change, however strong the flare. Light
+                # switching off is the same with the ratio the other way up.
+                x, y = 2.0 ** -lv, 2.0 ** (sign * v)
+                intercept = np.polyfit(x, y, 1, w=np.sqrt(w))[1]
+                if intercept > 0:
+                    return float(sign * np.log2(intercept))
+                brightest = lv >= np.percentile(lv, 75)          # a fit that makes no sense: brightest regions
+                if brightest.sum() >= 3:
+                    return _weighted_median(list(zip(v[brightest].tolist(), w[brightest].astype(int).tolist(),
+                                                     strict=True)))
     values = np.array([v for v, _ in votes])
     order = np.argsort(values)
     v, w = values[order], np.array([n for _, n in votes], dtype=np.float64)[order]

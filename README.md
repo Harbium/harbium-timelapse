@@ -151,10 +151,20 @@ Plenty of good timelapse tools came first, and this one learned a lot from the p
 
 No code was taken from any of them; everything here was written from scratch. The maths is long published: local regression (LOWESS, Cleveland 1979) and monotone cubic interpolation (Fritsch and Carlson 1980).
 
-It uses [numpy](https://numpy.org) (BSD), [Pillow](https://python-pillow.org) (MIT-CMU), [exifread](https://github.com/ianare/exif-py) (BSD) and, optionally, [rawpy](https://github.com/letmaik/rawpy) (MIT; its packages include LibRaw, under LGPL or CDDL) and [tifffile](https://github.com/cgohlke/tifffile) (BSD). [ExifTool](https://exiftool.org) and [ffmpeg](https://ffmpeg.org) are run as separate programs if you have them installed.
+It uses [numpy](https://numpy.org) (BSD), [Pillow](https://python-pillow.org) (MIT-CMU), [exifread](https://github.com/ianare/exif-py) (BSD) and, optionally, [rawpy](https://github.com/letmaik/rawpy) (MIT; its packages include LibRaw, under LGPL or CDDL), [tifffile](https://github.com/cgohlke/tifffile) (BSD) and, for the app, [Flet](https://flet.dev) (Apache-2.0). [ExifTool](https://exiftool.org) and [ffmpeg](https://ffmpeg.org) are run as separate programs if you have them installed.
+
+## Special thanks
+
+- [RapidRAW](https://github.com/CyberTimon/RapidRAW) by Timon Käch: the editor this tool was built around. Its open `.rrdata` edit files make keyframes and corrections possible, and its command-line export renders every frame for Export and finish.
+- [LibRaw](https://www.libraw.org) and [rawpy](https://github.com/letmaik/rawpy): for reading the RAW files the light is measured from.
+- [ExifTool](https://exiftool.org) by Phil Harvey: for reading camera settings from every RAW format, quickly.
+- [ffmpeg](https://ffmpeg.org): for every film this tool writes.
+- [Flet](https://flet.dev): for the app's interface.
+- Chenyang Lei, Xuanchi Ren, Zhaoxiang Zhang and Qifeng Chen, for the timelapse clips released with *Blind Video Deflickering by Neural Filtering with a Flawed Atlas* (CVPR 2023, CC BY 4.0): the outside benchmark every change to the measuring is checked against ([docs/BENCHMARK.md](docs/BENCHMARK.md)).
+- [pixls.us](https://discuss.pixls.us): for the open, generous discussion of timelapse problems that came before this.
 
 ## AI Usage
-Claude has been used to assist with planning, architecting, designing and developing this tool. Could I have done it without it? Maybe. Would it have taken significantly longer than two weeks? Absolutely. Everything it produced has been reviewed and tested before going in: there are 263 automated tests, results are measured on real footage rather than assumed, and the tool never changes original photos and backs up every edit file before touching it. If you find a problem, please open an issue so we can fix it :^).
+Claude has been used to assist with planning, architecting, designing and developing this tool. Could I have done it without it? Maybe. Would it have taken significantly longer than two weeks? Absolutely. Everything it produced has been reviewed and tested before going in: there are about 400 automated tests, run on Linux and Windows for every change, results are measured on real footage rather than assumed, and the tool never changes original photos and backs up every edit file before touching it. If you find a problem, please open an issue so we can fix it :^).
 
 ## Licence
 

@@ -109,6 +109,11 @@ class BlendResult:
 _MISSING = object()  # a setting a keyframe's sidecar doesn't contain at all
 
 
+def _ungraded(data: dict | None) -> bool:
+    """No grade on this frame yet: no settings, or only what this tool writes itself (Prepare's correction)."""
+    return set((data or {}).get("adjustments") or {}) <= {"exposure", "whiteBalance"}
+
+
 def plan_blend(seq: Sequence, label: str = KEYFRAME_LABEL) -> tuple[list[dict], list[int], dict[str, str]]:
     """Each frame's blended ``adjustments``, the keyframe positions, and the
     settings that had to be held rather than blended. Writes nothing."""
@@ -118,6 +123,12 @@ def plan_blend(seq: Sequence, label: str = KEYFRAME_LABEL) -> tuple[list[dict], 
             f"Found {len(keys)} purple keyframe{'s' if len(keys) != 1 else ''}. "
             "Label at least two frames purple (first and last at minimum), edit them, then blend."
         )
+    ungraded = [f"{seq[i].name} (frame {i + 1})" for i in keys if _ungraded(read_sidecar(seq[i].path))]
+    if ungraded:
+        # Blending towards a keyframe with no grade would fade every setting to RapidRAW's defaults there, and
+        # every setting would count as missing from it (the whole list came back "held").
+        raise ValueError(f"{', '.join(ungraded)} {'has' if len(ungraded) == 1 else 'have'} no grade yet. Grade "
+                         "every keyframe in RapidRAW (or remove it), then blend.")
     ledger = read_ledger(seq.folder)
     key_edits = []
     for i in keys:
