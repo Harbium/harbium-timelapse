@@ -66,7 +66,7 @@ pip install "harbium-timelapse[raw] @ git+https://github.com/TheDingusBingus/har
 
 It's worth installing [ExifTool](https://exiftool.org) as well, which is used to read camera settings (Canon CR3 files need it), and [ffmpeg](https://ffmpeg.org) for making videos. Both are free. If you want to work with 16-bit TIFF exports, install `harbium-timelapse[raw,tiff]` instead.
 
-A simple app with a window and a proper installer is on the to-do list, so you won't always need the command line.
+There's also a desktop app, which walks through the whole process (check the folder, steady the light, keyframes, export, finish, review) with a viewer that plays your sequence before and after the corrections. Install it with the `gui` extra, `harbium-timelapse[raw,gui]`, and start it with `flet run app/src/main.py` from a copy of this repository. A proper installer is on the to-do list.
 
 ## Commands
 
@@ -137,8 +137,6 @@ Lightroom support is new and hasn't been tried inside Lightroom itself yet, so p
 - Testing on more footage: sunrises, fixed white balance, other cameras
 - Confirming Lightroom support with real Lightroom users, then white balance for Lightroom
 - RawTherapee and darktable support
-- Light events (headlights into the lens, a flash) left alone rather than corrected as flicker
-- Exporting from RapidRAW automatically, so the app goes straight from blending to finishing
 - The app's installer, with ExifTool and ffmpeg included
 - Better handling of very large ND filter changes in `finish`
 - Hyperlapse support (lining frames up before measuring them)
