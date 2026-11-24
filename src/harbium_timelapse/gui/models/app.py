@@ -761,25 +761,115 @@ class AppModel:
     def can_finish(self) -> bool:
         return self.job is None and not self.export_check["problems"]
 
-    def start_finish(self) -> None:
-        if not self.can_finish:
-            return
+    def _finish_work(self, frames_from):
+        """The finishing job with the current export settings: ``frames_from(tracker)`` gives the folder of
+        graded frames (the found export, or a render made in the same job), then it's measured, corrected and
+        written. Shared by Finish and Export and finish, so both write films identically."""
         s = self.out
-        export = Path(self.project.export)
         video = Path(s.video_path) if s.video else None
         frames_out = Path(s.frames_folder) if s.frames else None
-        width = self._preset_width(export, s.width_limit()) if s.video else None
         options, window, mode = s.options(), self.window, self.slice_mode
         fmt = s.frames_format if s.frames else None
 
         def work(t):
+            export = Path(frames_from(t))
+            width = self._preset_width(export, s.width_limit()) if s.video else None
             planned = self.s.plan_export(export, window=window, tracker=t)
             done = self.s.write_export(planned, out=frames_out, video=video, fps=s.fps, width=width, slice_mode=mode,
                                        codec=s.codec, dither=s.dither, fmt=fmt, options=options,
                                        jpeg_quality=s.jpeg_quality, first=s.first, last=s.last,
                                        settings={"window": window, "preset": s.preset}, tracker=t)
-            return planned, done
-        self._run("Finishing", work, self._finished)
+            return export, planned, done
+        return work
+
+    def start_finish(self) -> None:
+        if not self.can_finish:
+            return
+        export = Path(self.project.export)
+        self._run("Finishing", self._finish_work(lambda t: export), lambda r: self._finished(r[1:]))
+
+    # --- Export and finish: render through RapidRAW, then finish, in one run -----------------------------------
+
+    @staticmethod
+    def renders_deep(s: ExportSettings) -> bool:
+        """16-bit TIFF renders for films and frames that keep more than 8 bits; JPEG for everything else."""
+        return (s.video and (s.codec == "prores" or (s.options().depth or 8) > 8)) or (
+            s.frames and s.frames_format in ("tif", "tiff"))
+
+    def render_plan(self, preset: str) -> dict:
+        """What Export and finish with ``preset`` would render: format words and the space still needed."""
+        if not self.keyframes_supported:
+            return {}
+        try:
+            deep = self.renders_deep(apply_preset(ExportSettings(), preset))
+        except ValueError:
+            return {}
+        need = self.s.render_needs(self.opened.seq, deep)
+        return {"deep": deep, "need": need,
+                "words": ("16-bit frames" if deep else "JPEG frames")
+                         + (f", about {need / 1e9:.1f} GB to render" if need else ", already rendered")}
+
+    def export_and_finish(self, preset: str = "share", finish: bool = True) -> None:
+        """Render every frame through RapidRAW (only frames whose edit changed since the last render), then
+        measure, correct and write the film with ``preset``, in one run. ``finish=False`` renders, then opens
+        Finish with every option instead."""
+        import shutil
+
+        from .export import problems as export_problems
+        if self.rapidraw_program is None or self.opened is None:
+            return
+        self.load_keyframes()
+        stale = self.keyframes_out_of_date
+        if stale and not getattr(self, "_export_warned", False):
+            self._export_warned = True
+            self._notice(stale + " Blend again, or press again to export them as they are.", "error")
+            self.changed()
+            return
+        seq, program = self.opened.seq, self.rapidraw_program
+        self.choose_preset(preset)
+        deep = self.renders_deep(self.out)
+        folder = self.s.render_folder_for(seq.folder, deep)
+        videos = Path.home() / "Videos"
+        if not self.out.video_path:
+            self.out.video_path = str((videos if videos.is_dir() else Path.home()) / (seq.folder.name + self.out.suffix))
+        if not self.out.frames_folder:
+            self.out.frames_folder = str(folder.parent / (folder.name + "-finished"))
+        need = self.s.render_needs(seq, deep)
+        try:
+            free = shutil.disk_usage(folder.parent).free
+        except OSError:
+            free = need
+        if need > free * 0.95:
+            self._notice(f"Rendering needs about {need / 1e9:.1f} GB, and the drive has {free / 1e9:.1f} GB free. "
+                         "Free some space, or choose Share (JPEG frames, much smaller).", "error")
+            self.changed()
+            return
+        found = export_problems(self.out, len(seq), None) if finish else []
+        if found:
+            self._notice(found[0], "error")
+            self.changed()
+            return
+
+        def render(t):
+            return self.s.render_with_rapidraw(seq, deep, tracker=t, program=program)
+
+        def kept(export) -> None:
+            self.project.export = str(export)
+            self.project.reach("exported")
+            self.project.save()
+
+        if not finish:
+            def rendered(export):
+                kept(export)
+                self.use_export(export)
+            self._run("Rendering with RapidRAW", render, rendered)
+            return
+
+        def done(result):
+            export, planned, finished = result
+            kept(export)
+            self._finished((planned, finished))
+        self._run("Exporting and finishing", self._finish_work(render), done)
 
     def _finished(self, result) -> None:
         self.planned, self.finished = result

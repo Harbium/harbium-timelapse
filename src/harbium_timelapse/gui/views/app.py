@@ -852,32 +852,42 @@ class GradeScreen(Screen):
             self.seq.refresh()
         s = m.export or ExportStatus("waiting")
         choose = ui.secondary("Choose a folder", self.choose)
-        if s.state == "waiting":
-            self.watch.controls = [ui.text("Export", size=17),
-                                   ui.text("Export every frame into a new folder next to the RAW files. The app "
-                                           "picks it up when it's done.", dim=True, size=14), choose]
-            if m.rapidraw_program is not None:
-                self.watch.controls = [
-                    ui.text("Export", size=17),
-                    ui.text("RapidRAW renders every frame into a new folder, then Finish opens.", dim=True, size=14),
-                    ft.Row([ui.primary("Export with RapidRAW", lambda e: m.export_with_rapidraw()), choose],
-                           spacing=10, wrap=True)]
-        elif s.state == "arriving":
+        found = []                                   # frames you exported yourself (or an earlier render)
+        if s.state == "arriving":
             total = len(m.opened.seq)
-            self.watch.controls = [ui.text(f"Export arriving: {s.frames} of {total} frames"),
-                                   ui.text(str(s.folder), dim=True, mono=True, size=13),
-                                   ft.ProgressBar(value=min(1.0, s.frames / total), color=ui.t["text"],
-                                                  bgcolor=ui.t["line"]), choose]
-        else:
-            self.watch.controls = [ui.text(f"Found {s.frames} exported frames", size=17),
-                                   ui.text(str(s.folder), dim=True, mono=True, size=13),
-                                   ft.Row([ui.primary("Finish", lambda e: m.use_export()),
-                                           *([ui.secondary("Export again with RapidRAW",
-                                                           lambda e: m.export_with_rapidraw(replace=True))]
-                                             if m.rapidraw_program is not None else []),
-                                           choose], spacing=10, wrap=True),
-                                   *([ui.text("Export again replaces these frames.", dim=True, size=13)]
-                                     if m.rapidraw_program is not None else [])]
+            found = [ui.text(f"Export arriving: {s.frames} of {total} frames"),
+                     ui.text(str(s.folder), dim=True, mono=True, size=13),
+                     ft.ProgressBar(value=min(1.0, s.frames / total), color=ui.t["text"], bgcolor=ui.t["line"])]
+        elif s.state == "complete":
+            found = [ui.text(f"Found {s.frames} exported frames", size=15),
+                     ui.text(str(s.folder), dim=True, mono=True, size=13),
+                     ft.Row([ui.secondary("Finish with these frames", lambda e: m.use_export())], spacing=10)]
+        if m.rapidraw_program is None:
+            self.watch.controls = ([ui.text("Export", size=17),
+                                    ui.text("Export every frame into a new folder next to the RAW files. The app "
+                                            "picks it up when it's done.", dim=True, size=14)]
+                                   + found + [choose])
+            return
+        preset = getattr(self, "preset", "share")
+        plan = m.render_plan(preset)
+        menu = ft.Dropdown(value=preset, width=self.ui.px(180),
+                           options=[ft.DropdownOption(key=key, text=BUILT_IN[key]["label"]) for key in BUILT_IN],
+                           on_select=self._preset_chosen)
+        self.watch.controls = [
+            ui.text("Export and finish", size=17),
+            ui.text("RapidRAW renders the frames, then the film is written. Only frames you've changed are "
+                    "rendered again.", dim=True, size=14),
+            ft.Row([menu, ui.text(BUILT_IN[preset]["detail"], dim=True, size=13)], spacing=12, wrap=True),
+            ui.text(plan.get("words", ""), dim=True, size=13),
+            ft.Row([ui.primary("Export and finish", lambda e: m.export_and_finish(preset)),
+                    ui.secondary("More options", lambda e: m.export_and_finish(preset, finish=False)), choose],
+                   spacing=10, wrap=True),
+            *([ft.Container(height=6)] + found if found else [])]
+
+    def _preset_chosen(self, e) -> None:
+        self.preset = e.control.value or "share"
+        self.refresh()
+        self.view.page.update()
 
     async def poll(self):
         while self._polling:

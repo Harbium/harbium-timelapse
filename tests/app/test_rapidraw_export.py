@@ -12,22 +12,40 @@ from harbium_timelapse.app import session
 from harbium_timelapse.sequencer import load_sequence
 
 FAKE = r'''#!{python}
-import os, sys
+import sys
 from pathlib import Path
 args = sys.argv[1:]
 print("Starting headless export...", flush=True)
 src, out = Path(args[1]), Path(args[args.index("--output") + 1])
+(out.parent / "rapidraw-args.txt").write_text(" ".join(args[2:]))       # what it was asked, for the tests
 if not src.is_dir() or "fail" in src.name:
     print(f"Headless export failed: Source path does not exist: {{src}}", flush=True)
     sys.exit(1)
+fmt = args[args.index("--format") + 1] if "--format" in args else "jpeg"
+skip_existing = "--on-conflict" in args and args[args.index("--on-conflict") + 1] == "overwrite-if-changed"
 raws = sorted(p for p in src.iterdir() if p.suffix.upper() == ".CR3")
 print(f"Found {{len(raws)}} images to export. Processing...", flush=True)
 out.mkdir(parents=True, exist_ok=True)
-for p in raws:
-    target = out / (p.stem + "_edited.jpeg")
-    target.write_bytes(b"jpeg")
+import os
+import numpy as np
+skipped = 0
+for i, p in enumerate(raws):
+    target = out / (p.stem + ("_edited.tiff" if fmt == "tiff" else "_edited.jpeg"))
+    if skip_existing and target.exists():
+        skipped += 1
+        continue
+    level = 0.25 * 2 ** (0.05 * np.sin(i))                                # a little flicker to correct
+    picture = np.clip(np.full((40, 60, 3), level) * np.linspace(0.6, 1.4, 60)[None, :, None], 0, 1)
+    if fmt == "tiff":
+        import tifffile
+        tifffile.imwrite(target, (picture * 65535).astype(np.uint16))
+    else:
+        from PIL import Image
+        Image.fromarray((picture * 255).astype(np.uint8)).save(target, quality=95)
     os.utime(target, (1726946460, 1726946460))      # the photo's own date, as RapidRAW keeps it
-    print(f"[INFO] [process_image_for_export] 5472x3648 processed (ROI: 5472x3648) on GPU in 275ms", flush=True)
+    print("[INFO] [process_image_for_export] 5472x3648 processed (ROI: 5472x3648) on GPU in 275ms", flush=True)
+if skipped:
+    print(f"Skipped {{skipped}} of {{len(raws)}} images because their output files already exist.", flush=True)
 print("Headless export completed successfully.", flush=True)
 '''
 
@@ -104,5 +122,27 @@ def test_exporting_again_replaces_the_frames_and_nothing_else(tmp_path, fake_rap
     stale.write_bytes(b"old grade")
     again = session.export_with_rapidraw(seq, out=out, program=fake_rapidraw, replace=True)
     assert again == out and len(list(out.glob("*_edited.jpeg"))) == 6
-    assert stale.read_bytes() == b"jpeg"                                    # the fresh frame, not the old one
+    assert stale.read_bytes()[:2] == b"\xff\xd8"                           # the fresh frame (a JPEG), not the old one
     assert (out / "notes.txt").read_text() == "mine" and (out / "poster.jpg").exists()
+
+
+def test_rendering_again_only_renders_what_changed_and_counts_the_rest_as_done(tmp_path, fake_rapidraw):
+    seq = raws(tmp_path / "sunset")
+    steps = Steps()
+    out = session.render_with_rapidraw(seq, deep=False, tracker=steps, program=fake_rapidraw)
+    assert out == tmp_path / "sunset render" and len(list(out.glob("*_edited.jpeg"))) == 6
+    asked = (tmp_path / "rapidraw-args.txt").read_text()
+    assert "--on-conflict overwrite-if-changed" in asked and "--color-space srgb" in asked and "--quality 95" in asked
+    (out / "181A0836_edited.jpeg").unlink()                                   # one frame's edit changed
+    steps = Steps()
+    session.render_with_rapidraw(seq, deep=False, tracker=steps, program=fake_rapidraw)
+    assert steps.seen[-1] == ("Frames", 6, 6)                                 # 1 rendered + 5 skipped = all done
+
+
+def test_deep_renders_are_16_bit_tiff_in_their_own_folder(tmp_path, fake_rapidraw):
+    pytest.importorskip("tifffile")
+    seq = raws(tmp_path / "sunset")
+    out = session.render_with_rapidraw(seq, deep=True, program=fake_rapidraw)
+    assert out == tmp_path / "sunset render 16-bit" and len(list(out.glob("*.tiff"))) == 6
+    assert "--format tiff --tiff-bit-depth 16" in (tmp_path / "rapidraw-args.txt").read_text()
+    assert session.render_needs(seq, deep=True) == 0                         # all rendered: nothing more needed

@@ -431,7 +431,7 @@ def export_folder_for(raw_folder: Path) -> Path:
 
 def export_with_rapidraw(seq: Sequence, out: Path | None = None, fmt: str = "jpeg", quality: int = 95,
                          tracker: Tracker | None = None, program: Path | None = None,
-                         replace: bool = False) -> Path:
+                         replace: bool = False, incremental: bool = False, deep: bool = False) -> Path:
     """Render every frame with its RapidRAW edit, through RapidRAW's command-line export (RapidRAW 1.6+), into
     ``out`` (default: a new folder beside the RAW folder). Progress comes from RapidRAW's own output; Cancel
     stops it. Returns the folder."""
@@ -450,8 +450,11 @@ def export_with_rapidraw(seq: Sequence, out: Path | None = None, fmt: str = "jpe
         for f in out.iterdir():
             if f.is_file() and f.suffix.lower() in FRAME_SUFFIXES and stems and named_after(f.name, stems):
                 f.unlink()
-    command = [str(program), "export", str(seq.folder), "--output", str(out), "--format", fmt,
-               "--quality", str(int(quality))]
+    command = [str(program), "export", str(seq.folder), "--output", str(out), "--color-space", "srgb"]
+    command += (["--format", "tiff", "--tiff-bit-depth", "16"] if deep else
+                ["--format", fmt, "--quality", str(int(quality))])
+    if incremental:
+        command += ["--on-conflict", "overwrite-if-changed"]   # RapidRAW re-renders only frames whose edit changed
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
     hook = tracker.stage("Frames") if tracker else None
     total, done, tail = len(seq), 0, []
@@ -463,10 +466,14 @@ def export_with_rapidraw(seq: Sequence, out: Path | None = None, fmt: str = "jpe
             found = re.search(r"Found (\d+) images", line)
             if found:
                 total = int(found.group(1))
+            skipped = re.search(r"Skipped (\d+) of (\d+)", line)
             if "processed" in line and "process_image_for_export" in line:
                 done += 1
                 if hook:
                     hook(min(done, total), total)
+            elif skipped and hook:                       # unchanged frames: already rendered, counted as done
+                done += int(skipped.group(1))
+                hook(min(done, total), total)
             if tracker:
                 tracker.token.check()                    # Cancel: stops RapidRAW too (below)
         code = proc.wait()
@@ -500,3 +507,37 @@ def frames_off_the_blend(editor: Editor, seq: Sequence) -> list:
 
 
 NOT_BLENDED = "(no edit file yet)"
+
+
+# --- rendering for Export and finish ----------------------------------------------------------------------------
+
+def render_folder_for(raw_folder: Path, deep: bool) -> Path:
+    """The kept render folder beside the RAW folder: one per format, so switching presets never mixes them."""
+    raw_folder = Path(raw_folder)
+    return raw_folder.parent / (f"{raw_folder.name} render" + (" 16-bit" if deep else ""))
+
+
+def frame_pixels(seq: Sequence) -> int:
+    """Pixels in a frame, from the first RAW file's header (24 megapixels if it can't be read)."""
+    try:
+        import rawpy
+        with rawpy.imread(str(seq[0].path)) as raw:
+            return int(raw.sizes.width) * int(raw.sizes.height)
+    except Exception:        # noqa: BLE001 - an estimate only
+        return 24_000_000
+
+
+def render_needs(seq: Sequence, deep: bool) -> int:
+    """Bytes still needed to render every frame (frames already rendered there don't count again)."""
+    per_frame = frame_pixels(seq) * 6 if deep else 3_600_000         # 16-bit TIFF exactly; JPEG about 3.6 MB
+    folder = render_folder_for(seq.folder, deep)
+    have = len([f for f in folder.iterdir() if f.suffix.lower() in FRAME_SUFFIXES]) if folder.is_dir() else 0
+    return max(0, len(seq) - have) * per_frame
+
+
+def render_with_rapidraw(seq: Sequence, deep: bool, tracker: Tracker | None = None,
+                         program: Path | None = None) -> Path:
+    """Render every frame into the kept render folder: only frames whose edit changed since the last render
+    are rendered again (RapidRAW's overwrite-if-changed). JPEG at quality 95, or 16-bit TIFF (``deep``)."""
+    return export_with_rapidraw(seq, out=render_folder_for(seq.folder, deep), tracker=tracker, program=program,
+                                incremental=True, deep=deep)

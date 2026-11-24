@@ -412,3 +412,52 @@ def test_only_the_viewer_on_screen_keeps_its_frames(bare_raws, monkeypatch):
     m.export_view = SequenceFrames([np.zeros((4, 6, 3), np.uint8)])
     m.go("grade")
     assert m.export_view is None
+
+
+def _stand_in(tmp_path, monkeypatch):
+    import importlib.util
+    from pathlib import Path as _Path
+    spec = importlib.util.spec_from_file_location(
+        "rapidraw_stand_in", _Path(__file__).parent.parent / "app" / "test_rapidraw_export.py")
+    stand_in = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(stand_in)
+    program = stand_in.make_stand_in(tmp_path / "bin")
+    monkeypatch.setattr(session, "find_rapidraw", lambda: program)
+    return program
+
+
+def test_the_render_format_follows_the_preset():
+    from harbium_timelapse.gui.models.export import apply_preset, ExportSettings
+    deep = {p: AppModel.renders_deep(apply_preset(ExportSettings(), p)) for p in ("share", "master", "edit")}
+    assert deep == {"share": False, "master": True, "edit": True}        # 8-bit H.264 gains nothing from 16-bit
+
+
+@pytest.mark.skipif(not shutil.which("ffmpeg"), reason="needs ffmpeg")
+def test_export_and_finish_renders_measures_corrects_and_writes_in_one_run(bare_raws, tmp_path, monkeypatch):
+    _stand_in(tmp_path, monkeypatch)
+    m = opened(bare_raws)
+    m.choose_editor("rapidraw")
+    m.wait()
+    m.out.video_path = str(tmp_path / "film.mp4")
+    m.export_and_finish("share")
+    m.wait()
+    assert m.screen == "done", m.message
+    assert m.project.export.endswith("sunset render") and (tmp_path / "film.mp4").stat().st_size > 0
+    asked = (bare_raws.parent / "rapidraw-args.txt").read_text()
+    assert "--format jpeg" in asked
+    m.screen = "grade"
+    m.export_and_finish("share")                                        # nothing changed: nothing rendered
+    m.wait()
+    assert m.screen == "done", m.message
+
+
+def test_export_and_finish_refuses_without_the_disk_space(bare_raws, tmp_path, monkeypatch):
+    import shutil as _shutil
+    _stand_in(tmp_path, monkeypatch)
+    m = opened(bare_raws)
+    m.choose_editor("rapidraw")
+    m.wait()
+    monkeypatch.setattr(_shutil, "disk_usage", lambda path: type("U", (), {"free": 10_000_000})())
+    m.screen = "grade"
+    m.export_and_finish("master")                                         # 16-bit: ~120 MB a frame
+    assert m.screen == "grade" and m.job is None and "GB" in m.message and "Share" in m.message
