@@ -164,7 +164,11 @@ It uses [numpy](https://numpy.org) (BSD), [Pillow](https://python-pillow.org) (M
 - [pixls.us](https://discuss.pixls.us): for the open, generous discussion of timelapse problems that came before this.
 
 ## AI Usage
-Claude has been used to assist with planning, architecting, designing and developing this tool. Could I have done it without it? Maybe. Would it have taken significantly longer than two weeks? Absolutely. Everything it produced has been reviewed and tested before going in: there are about 400 automated tests, run on Linux and Windows for every change, results are measured on real footage rather than assumed, and the tool never changes original photos and backs up every edit file before touching it. If you find a problem, please open an issue so we can fix it :^).
+Claude has been used to assist with planning, architecting, designing and developing this tool. Everything it produced has been reviewed and tested before going in: there are about 400 automated tests, run on Linux and Windows for every change, results are measured on real footage rather than assumed, and the tool never changes original photos and backs up every edit file before touching it. If you find a problem, please open an issue so we can fix it :^).
+
+## Support
+
+harbium-timelapse is free and open source, built alongside my photography work. If it saves you time, you can support it on [Ko-fi](https://ko-fi.com/harbium): it buys time to work on it and new footage to test it with.
 
 ## Licence
 
