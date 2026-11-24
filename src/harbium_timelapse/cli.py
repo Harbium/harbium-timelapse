@@ -186,7 +186,7 @@ def _main(argv: list[str] | None = None) -> int:
         with open(args.csv, "w", newline="") as f:
             w = csv.writer(f)
             w.writerow(["frame", "brightness_stops", "target_stops", "correction_stops", "warmth"])
-            for frame, b, t, e, c in zip(fix.frames, fix.brightness, fix.target, fix.exposure, warmth):
+            for frame, b, t, e, c in zip(fix.frames, fix.brightness, fix.target, fix.exposure, warmth, strict=True):
                 w.writerow([frame.name, f"{b:.4f}", f"{t:.4f}", f"{e:+.4f}", f"{c:.4f}"])
         print(f"  Saved {args.csv}")
     return 0
@@ -260,7 +260,7 @@ def _finish(args) -> int:
         with open(args.csv, "w", newline="") as f:
             w = csv.writer(f)
             w.writerow(["frame", "red", "green", "blue", "gain_red", "gain_green", "gain_blue"])
-            for path, m, g in zip(p.frames, p.measured, p.gains):
+            for path, m, g in zip(p.frames, p.measured, p.gains, strict=True):
                 w.writerow([path.name, *(f"{v:.4f}" for v in m), *(f"{v:+.4f}" for v in g)])
         print(f"  Saved {args.csv}")
     if args.dry_run:

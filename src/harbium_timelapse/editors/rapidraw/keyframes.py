@@ -174,7 +174,7 @@ def frames_off_the_blend(seq: Sequence, label: str = KEYFRAME_LABEL) -> list[tup
     aside, since deflicker changes it). For ``check``."""
     per_frame, _, _ = plan_blend(seq, label)
     off = []
-    for f, expected in zip(seq, per_frame):
+    for f, expected in zip(seq, per_frame, strict=True):
         actual = dict((read_sidecar(f.path) or {}).get("adjustments") or {})
         expected = dict(expected)
         for per_frame_setting in ("exposure", "whiteBalance"):
@@ -196,7 +196,7 @@ def _blend(values: list, keys: list[int], names: list[str], n: int, path: str, h
     without stopping everything else from blending.
     """
     if any(v is _MISSING for v in values):
-        lacking = [name for name, v in zip(names, values) if v is _MISSING]
+        lacking = [name for name, v in zip(names, values, strict=True) if v is _MISSING]
         held[path] = "not set on " + ", ".join(lacking)
         return _hold(values, keys, n)
 
@@ -244,7 +244,7 @@ def _is_curve(v) -> bool:
     return (isinstance(v, list) and len(v) >= 2
             and all(isinstance(p, dict) and set(p) == {"x", "y"} and _is_number(p["x"]) and _is_number(p["y"])
                     for p in v)
-            and all(a["x"] < b["x"] for a, b in zip(v, v[1:])))
+            and all(a["x"] < b["x"] for a, b in zip(v, v[1:], strict=False)))
 
 
 def _same_points(curves: list) -> bool:
@@ -311,7 +311,7 @@ def _close(a, b) -> bool:
     if isinstance(a, dict) and isinstance(b, dict):
         return a.keys() == b.keys() and all(_close(a[k], b[k]) for k in a)
     if isinstance(a, list) and isinstance(b, list):
-        return len(a) == len(b) and all(_close(x, y) for x, y in zip(a, b))
+        return len(a) == len(b) and all(_close(x, y) for x, y in zip(a, b, strict=False))
     return a == b
 
 

@@ -397,3 +397,18 @@ def test_the_review_viewer_loads_the_exported_frames(folder, tmp_path):
     assert len(m.export_view) == len(m.planned.frames) and m.export_view.gains.shape == (len(m.planned.frames), 3)
     m.set_export_cursor(3)
     assert m.export_view_image().ndim == 3
+
+
+def test_only_the_viewer_on_screen_keeps_its_frames(bare_raws, monkeypatch):
+    """Grade's RAW frames and Review's exported frames are each a few hundred MB for a long sequence."""
+    from harbium_timelapse.gui.models.viewer import SequenceFrames
+    m = opened(bare_raws)
+    m.choose_editor("rapidraw")
+    m.wait()
+    m.view, m.export_view = SequenceFrames([np.zeros((4, 6, 3), np.uint8)]), SequenceFrames([np.zeros((4, 6, 3), np.uint8)])
+    monkeypatch.setattr(m, "can_go", lambda screen: True)
+    m.go("done")
+    assert m.view is None and m.export_view is not None
+    m.export_view = SequenceFrames([np.zeros((4, 6, 3), np.uint8)])
+    m.go("grade")
+    assert m.export_view is None

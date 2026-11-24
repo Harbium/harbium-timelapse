@@ -141,7 +141,7 @@ class FlickerCorrections:
     unmeasured: tuple[int, ...] = ()
 
     def by_filename(self) -> dict[str, float]:
-        return {f.name: float(e) for f, e in zip(self.frames, self.exposure)}
+        return {f.name: float(e) for f, e in zip(self.frames, self.exposure, strict=True)}
 
     @property
     def flicker_before(self) -> float:

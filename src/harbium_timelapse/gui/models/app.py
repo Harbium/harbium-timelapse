@@ -219,6 +219,12 @@ class AppModel:
         if not self.can_go(screen):
             return
         self.screen = screen
+        # Only one viewer is ever on screen: free the other's frames (a few hundred MB for a long sequence);
+        # coming back loads them again in a few seconds.
+        if screen in ("finish", "done"):
+            self.view = None
+        elif screen in ("prepare", "grade"):
+            self.export_view = None
         if screen == "prepare":
             self._ensure_measured()
         elif screen == "grade":

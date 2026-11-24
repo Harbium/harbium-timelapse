@@ -35,9 +35,9 @@ def _read(name: str, default):
 def _write(name: str, data) -> None:
     folder = config_dir()
     folder.mkdir(parents=True, exist_ok=True)
-    temp = folder / (name + ".tmp")
-    temp.write_text(json.dumps(data, indent=1), encoding="utf-8")
-    os.replace(temp, folder / name)
+    from ..files import write_atomically
+    text = json.dumps(data, indent=1)
+    write_atomically(folder / name, lambda t: t.write_text(text, encoding="utf-8"))
 
 
 def recent_projects() -> list[dict]:

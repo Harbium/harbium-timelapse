@@ -50,18 +50,16 @@ def write_json(path: Path, data: dict, indent: int | None = 2) -> None:
     """Write atomically: a crash mid-write never leaves a half-written file."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    temp = path.with_name(path.name + ".tmp")
-    temp.write_text(json.dumps(data, indent=indent), encoding="utf-8", newline="")   # LF, even on Windows
-    os.replace(temp, path)
+    from ..files import write_atomically
+    text = json.dumps(data, indent=indent)
+    write_atomically(path, lambda t: t.write_text(text, encoding="utf-8", newline=""))   # LF, even on Windows
 
 
 def write_bytes_atomically(path: Path, data: bytes) -> None:
     """Replace a file in one step: a crash mid-write never leaves half a file.
     Bytes in, bytes out, so line endings and everything else stay exactly as given."""
-    path = Path(path)
-    temp = path.with_name(path.name + ".tmp")
-    temp.write_bytes(data)
-    os.replace(temp, path)
+    from ..files import write_atomically
+    write_atomically(Path(path), lambda t: t.write_bytes(data))
 
 
 # --- untouched copies -------------------------------------------------------------

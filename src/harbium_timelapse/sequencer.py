@@ -110,7 +110,7 @@ def _check_timing(frames: tuple[Frame, ...]) -> list[Problem]:
             "Gaps can't be detected.",
         )]
 
-    gaps = [(b.taken_at - a.taken_at).total_seconds() for a, b in zip(frames, frames[1:])]
+    gaps = [(b.taken_at - a.taken_at).total_seconds() for a, b in zip(frames, frames[1:], strict=False)]
     usual = median(gaps)
     if usual <= 0:
         return []
@@ -138,7 +138,7 @@ def _check_timing(frames: tuple[Frame, ...]) -> list[Problem]:
 
 def _check_settings_changes(frames: tuple[Frame, ...]) -> list[Problem]:
     problems: list[Problem] = []
-    for i, (a, b) in enumerate(zip(frames, frames[1:]), start=1):
+    for i, (a, b) in enumerate(zip(frames, frames[1:], strict=False), start=1):
         if a.exposure_value is None or b.exposure_value is None:
             continue
         shift = a.exposure_value - b.exposure_value  # positive = b gets more light

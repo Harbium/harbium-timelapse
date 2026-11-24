@@ -57,7 +57,7 @@ def ordered_map(fn: Callable[[T], R], items: Iterable[T], workers: int | None = 
         yield from map(fn, items)
         return
     try:
-        with pool:
+        try:
             pending: deque = deque()
             upcoming = iter(items)
             for item in upcoming:
@@ -71,6 +71,9 @@ def ordered_map(fn: Callable[[T], R], items: Iterable[T], workers: int | None = 
                 nxt = next(upcoming, _END)
                 if nxt is not _END:
                     pending.append(pool.submit(fn, nxt))
+        finally:
+            # Stopped early (cancelled, or an error): drop the queued work rather than decode it first.
+            pool.shutdown(wait=True, cancel_futures=True)
     except BrokenProcessPool:
         # A worker died (e.g. the system ran out of memory): finish one at a time.
         yield from map(fn, items[done:])

@@ -77,7 +77,7 @@ def tone_shares(tinies: list[np.ndarray], reference: np.ndarray) -> ToneShares |
         return None
     edges = np.percentile(ref[still], EDGES)
     levels, shares, bands, clear = [], [], [], False
-    for band, (lo, hi) in enumerate(zip(edges[:-1], edges[1:])):
+    for band, (lo, hi) in enumerate(zip(edges[:-1], edges[1:], strict=False)):
         mask = still & (ref >= lo) & (ref < hi)
         if mask.sum() < 10:
             continue

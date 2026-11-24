@@ -61,9 +61,10 @@ def save(path: Path, linear: np.ndarray) -> None:
     gain = gain_for(rgb)
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
-        temp = target.with_name(f"{target.stem}.{os.getpid()}.tmp.jpg")
-        Image.fromarray(to_display(rgb, gain)).save(temp, quality=92, comment=f"gain={gain:g}".encode())
-        os.replace(temp, target)
+        from .files import write_atomically
+        picture = Image.fromarray(to_display(rgb, gain))
+        write_atomically(target, lambda t: picture.save(t, format="JPEG", quality=92,
+                                                         comment=f"gain={gain:g}".encode()), ".tmp.jpg")
     except OSError:
         pass                                      # a preview that can't be saved is never an error
 
@@ -76,6 +77,8 @@ def load(path: Path) -> np.ndarray | None:
     from PIL import Image
     from .timeslice import from_display
     try:
+        from .files import touch
+        touch(target)                                 # just used: kept longest by the cache upkeep
         with Image.open(target) as im:
             gain = float(im.info.get("comment", b"gain=1").decode().split("=", 1)[1])
             return from_display(np.asarray(im.convert("RGB"))) / gain
@@ -92,6 +95,8 @@ def load_small(path: Path, longest: int) -> np.ndarray | None:
     from PIL import Image
     from .timeslice import from_display
     try:
+        from .files import touch
+        touch(target)                                 # just used: kept longest by the cache upkeep
         with Image.open(target) as im:
             gain = float(im.info.get("comment", b"gain=1").decode().split("=", 1)[1])
             im.draft("RGB", (longest, longest))

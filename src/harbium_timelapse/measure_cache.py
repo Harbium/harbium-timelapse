@@ -54,6 +54,8 @@ def load(paths: list[Path], kind: str, extra: str = "") -> dict[str, np.ndarray]
     if k is None:
         return None
     try:
+        from .files import touch
+        touch(_folder() / f"{k}.npz")                 # just used: kept longest by the cache upkeep
         with np.load(_folder() / f"{k}.npz", allow_pickle=False) as data:
             arrays = {name: data[name] for name in data.files}
     except (OSError, ValueError, KeyError):
@@ -73,8 +75,8 @@ def save(paths: list[Path], kind: str, arrays: dict[str, np.ndarray], extra: str
     folder = _folder()
     try:
         folder.mkdir(parents=True, exist_ok=True)
-        temp = folder / f"{k}.{os.getpid()}.tmp.npz"
-        np.savez(temp, **{name: np.asarray(a) for name, a in arrays.items()})
-        os.replace(temp, folder / f"{k}.npz")
+        from .files import write_atomically
+        write_atomically(folder / f"{k}.npz",
+                         lambda t: np.savez(t, **{name: np.asarray(a) for name, a in arrays.items()}), ".tmp.npz")
     except OSError:
         pass                                       # not being able to remember is never an error

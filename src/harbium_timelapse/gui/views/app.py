@@ -634,8 +634,11 @@ class SequenceView:
         m, src = self.m, self.src
         key = (src.cursor, m.view_mode, round(m.wipe, 3), id(src.frames), id(src.series))
         line_key = (src.cursor, self._keys(), id(src.series))
+        self._wanted = key                                  # only the latest request is drawn
 
         async def draw():
+            if key != self._wanted:                         # scrubbed past already: skip this one
+                return
             if key != self._shown:
                 image = await asyncio.to_thread(src.image)
                 if image is not None:
@@ -1377,10 +1380,22 @@ class View:
         self.page.update()
 
 
+def _quietly(fn) -> None:
+    """Housekeeping must never stop the app."""
+    try:
+        fn()
+    except Exception:            # noqa: BLE001
+        pass
+
+
 def start(page: ft.Page) -> View:
     """Set up the window and show the app. Fonts are read from the app's assets folder."""
     page.title = "Harbium Timelapse"
     page.padding = 0
+    import threading
+
+    from ...files import upkeep
+    threading.Thread(target=lambda: _quietly(upkeep), name="cache upkeep", daemon=True).start()   # tidy caches
     page.window.min_width, page.window.min_height = 1000, 700     # below this the header and columns can't fit
     page.fonts = FONTS
     from ...app import config

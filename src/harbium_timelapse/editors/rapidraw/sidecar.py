@@ -18,7 +18,6 @@ from __future__ import annotations
 import dataclasses
 import json
 import math
-import os
 from datetime import datetime
 from pathlib import Path
 
@@ -55,9 +54,8 @@ def write_sidecar(image: Path, data: dict) -> None:
             text = text.replace("\n", "\r\n")
     except OSError:
         pass                                    # a new file
-    temp = path.with_name(path.name + ".tmp")  # doesn't match RapidRAW's *.rrdata scan
-    temp.write_text(text, encoding="utf-8", newline="")         # exactly these endings, even on Windows
-    os.replace(temp, path)
+    from ...files import write_atomically          # the temporary name ends .tmp: not matched by RapidRAW's scan
+    write_atomically(path, lambda t: t.write_text(text, encoding="utf-8", newline=""))   # exactly these endings
 
 
 def get_exposure(data: dict) -> float:

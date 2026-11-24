@@ -140,10 +140,9 @@ class _SettingsCache:
             return
         try:
             self.file.parent.mkdir(parents=True, exist_ok=True)
-            temp = self.file.with_name(self.file.name + f".{os.getpid()}.tmp")
-            temp.write_text(json.dumps({"version": 1, "folder": self.folder, "files": self.entries}),
-                            encoding="utf-8")
-            os.replace(temp, self.file)
+            from .files import write_atomically
+            text = json.dumps({"version": 1, "folder": self.folder, "files": self.entries})
+            write_atomically(self.file, lambda t: t.write_text(text, encoding="utf-8"))
         except OSError:
             pass                      # a cache that can't be saved just means reading again next time
 
@@ -221,7 +220,7 @@ def _read_with_exiftool(paths: list[Path], progress: Progress | None) -> dict[st
         if source:
             frames[_key(source)] = _frame_from(rec)
     # Keep the caller's own Path objects, not ExifTool's spelling of them.
-    by_key = {_key(p): q for p, q in zip(resolved, paths)}
+    by_key = {_key(p): q for p, q in zip(resolved, paths, strict=True)}
     return {k: dataclasses.replace(f, path=by_key[k]) for k, f in frames.items() if k in by_key}
 
 

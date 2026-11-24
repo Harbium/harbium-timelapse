@@ -207,7 +207,7 @@ def _vote(votes: list[tuple[float, int]]) -> float:
         groups = [(v[:cut], w[:cut]), (v[cut:], w[cut:])]
         calm = min(groups, key=lambda g: abs(float(np.average(g[0], weights=g[1]))))
         if calm[1].sum() >= EVENT_SIDE * w.sum():
-            return _weighted_median(list(zip(calm[0].tolist(), calm[1].tolist())))
+            return _weighted_median(list(zip(calm[0].tolist(), calm[1].tolist(), strict=True)))
     return _weighted_median(votes)
 
 

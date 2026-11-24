@@ -163,7 +163,7 @@ def _check_matching_edits(sidecars: list[tuple[str, dict]]) -> list[Problem]:
     common = json.loads(common_key)
 
     problems = []
-    for (name, adj), key in zip(looks, keys):
+    for (name, adj), key in zip(looks, keys, strict=True):
         if key == common_key:
             continue
         differ = sorted(k for k in set(adj) | set(common) if adj.get(k) != common.get(k))
@@ -199,7 +199,7 @@ def plan(
     fix = smooth_flicker(seq, window=window, strength=strength, brightness=seen, blend=blend)
     return Plan(
         folder=seq.folder,
-        frames=tuple(FramePlan(f, float(b), float(c)) for f, b, c in zip(seq, bases, fix.exposure)),
+        frames=tuple(FramePlan(f, float(b), float(c)) for f, b, c in zip(seq, bases, fix.exposure, strict=True)),
         flicker=fix,
     )
 

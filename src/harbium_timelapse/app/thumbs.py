@@ -11,7 +11,6 @@ name).
 from __future__ import annotations
 
 import hashlib
-import os
 from pathlib import Path
 
 WIDTH = 240
@@ -29,6 +28,8 @@ def thumbnail(path: Path, width: int = WIDTH) -> Path:
                          .encode()).hexdigest()[:24]               # ctime: re-exported frames keep their dates
     target = _folder() / f"{key}.jpg"
     if target.exists():
+        from ..files import touch
+        touch(target)                                     # just used: kept longest by the cache upkeep
         return target
     from PIL import Image
     with Image.open(path) as im:
@@ -37,7 +38,6 @@ def thumbnail(path: Path, width: int = WIDTH) -> Path:
         im = im.convert("RGB")
         im.thumbnail((width, width * 2))
         target.parent.mkdir(parents=True, exist_ok=True)
-        temp = target.with_name(f"{target.stem}.{os.getpid()}.tmp.jpg")
-        im.save(temp, quality=85)
-    os.replace(temp, target)
+        from ..files import write_atomically
+        write_atomically(target, lambda t: im.save(t, format="JPEG", quality=85), ".tmp.jpg")
     return target

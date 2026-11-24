@@ -45,6 +45,6 @@ def check_folders(before: Path, after: Path, progress=None) -> tuple[list[Findin
     from .app import session
     from .diagnose import LUMA
     planned = session.plan_export(before)            # finish's own measurement: usually cached from the export
-    by_name = {f.name: v for f, v in zip(planned.frames, planned.plan.measured @ LUMA)}
+    by_name = {f.name: v for f, v in zip(planned.frames, planned.plan.measured @ LUMA, strict=True)}
     reference = np.array([by_name.get(b.name, np.nan) for b, _ in pairs])
     return [check_tones(rec, reference), check_regions(rec, reference)], len(pairs)

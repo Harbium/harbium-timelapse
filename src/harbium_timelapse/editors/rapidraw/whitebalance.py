@@ -109,7 +109,7 @@ def plan_white_balance(seq: Sequence, mode: str | float = "smooth",
     else:
         scale, shot_tint = CAMERA_GUESS, None
         as_shot = [f.white_balance for f in seq]
-        missing = [f.name for f, k in zip(seq, as_shot) if not k]
+        missing = [f.name for f, k in zip(seq, as_shot, strict=True) if not k]
         if missing and mode != "first" and not isinstance(mode, (int, float)):
             raise ValueError(f"Couldn't read the as-shot white balance of {len(missing)} frames "
                              f"(first: {missing[0]}). This needs ExifTool installed.")

@@ -10,7 +10,6 @@ ever read from; anything the app writes goes where the user chose at the time.
 from __future__ import annotations
 
 import json
-import os
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -47,9 +46,9 @@ class Project:
         folder.mkdir(parents=True, exist_ok=True)
         data = {k: v for k, v in asdict(self).items() if k not in ("folder", "note")}
         data.update(version=VERSION, saved=datetime.now(timezone.utc).isoformat(timespec="seconds"))
-        temp = folder / (FILE + ".tmp")
-        temp.write_text(json.dumps(data, indent=1), encoding="utf-8")
-        os.replace(temp, folder / FILE)
+        from ..files import write_atomically
+        text = json.dumps(data, indent=1)
+        write_atomically(folder / FILE, lambda t: t.write_text(text, encoding="utf-8"))
 
 
 def load_project(folder: Path | str) -> Project:

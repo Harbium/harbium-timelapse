@@ -325,7 +325,7 @@ def _slider_strength(seq, render, applied, base, history, raw_light, window) -> 
             if len(record.get("strength") or []) == len(render):
                 return np.array(record["strength"], dtype=np.float64)
         # Or learn it again from the last two earlier passes where Exposure did move.
-        for older, newer in zip(reversed(history[:-1]), reversed(history[1:])):
+        for older, newer in zip(reversed(history[:-1]), reversed(history[1:]), strict=True):
             r0, a0 = np.array(older["render"]), np.array(older["applied"])
             r1, a1 = np.array(newer["render"]), np.array(newer["applied"])
             if len(r0) == len(r1) == len(render):
