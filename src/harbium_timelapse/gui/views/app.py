@@ -114,6 +114,14 @@ class UI:
 # --- the screens ---------------------------------------------------------------------------------
 
 class Screen:
+    def picture(self, key, make):
+        """A picture made once and reused on every refresh: a new picture control for the same image reloads it,
+        which shows as a white flash while it does (many times a second during playback or a job)."""
+        cache = self.__dict__.setdefault("_pictures", {})
+        if key not in cache:
+            cache[key] = make()
+        return cache[key]
+
     def columns(self, side: int = 360) -> tuple[int, int, bool]:
         """(side width, main width, side by side?): two columns when there's room for the main one to be at
         least 640 wide, otherwise one column using the full width."""
@@ -777,7 +785,8 @@ class KeyframesPanel:
         path = self.m.keyframe_thumb(frame)
         if path is None:
             return ft.Container(width=width, height=height, bgcolor=self.ui.t["line"], border_radius=2)
-        return ft.Image(src=_image_bytes(path), width=width, height=height, fit=ft.BoxFit.COVER, border_radius=2)
+        return self.screen.picture(("keyframe", str(path), width, height), lambda: ft.Image(
+            src=_image_bytes(path), width=width, height=height, fit=ft.BoxFit.COVER, border_radius=2))
 
     def _go(self, frame: int) -> None:
         viewer = getattr(self.screen, "seq", None)
@@ -788,6 +797,11 @@ class KeyframesPanel:
         ui, m = self.ui, self.m
         seq = m.opened.seq
         keys, state = m.keyframes or [], m.keyframes_state
+        shown = (tuple((k["frame"], k["reason"], m.keyframe_thumb(k["frame"]) is not None) for k in keys), state,
+                 m.keyframes_out_of_date if state == "labelled" else None)
+        if shown == getattr(self, "_shown_list", None) and self.body.controls:
+            return                                  # nothing changed: leave the list (and its pictures) alone
+        self._shown_list = shown
         rows = [ui.text("Keyframes", size=17),
                 ui.text("Grade a few frames. The app blends every setting between them.", dim=True, size=14)]
         if not keys:
@@ -1056,17 +1070,21 @@ class FinishScreen(Screen):
             return [ft.Row([ft.Container(ui.text("Trim", dim=True, size=14), width=150),
                             ui.text("Making thumbnails...", dim=True, size=13)])]
         first, last = s.first or 1, s.last or n
-        strip = ft.Row([ft.Image(src=_image_bytes(path), width=62, height=42, fit=ft.BoxFit.COVER, border_radius=2,
-                                 opacity=1.0 if first - 1 <= i <= last - 1 else 0.3) for i, path in m.trim_strip],
-                       spacing=2)
+        def thumb(i, path):
+            image = self.picture(("trim", str(path)), lambda: ft.Image(src=_image_bytes(path), width=62, height=42,
+                                                                       fit=ft.BoxFit.COVER, border_radius=2))
+            image.opacity = 1.0 if first - 1 <= i <= last - 1 else 0.3
+            return image
+        strip = ft.Row([thumb(i, path) for i, path in m.trim_strip], spacing=2)
         slider = ft.RangeSlider(min=1, max=n, start_value=first, end_value=last, divisions=n - 1, label="{value}",
                                 width=62 * len(m.trim_strip) + 2 * (len(m.trim_strip) - 1),
                                 on_change_end=lambda e: m.set_trim(int(e.control.start_value), int(e.control.end_value)))
         ends = []
         for label, frame, path in (("First", first, m.trim_ends[0] if m.trim_ends else None),
                                    ("Last", last, m.trim_ends[1] if m.trim_ends else None)):
-            ends.append(ft.Column([ft.Image(src=_image_bytes(path), width=180, height=120, fit=ft.BoxFit.COVER, border_radius=2)
-                                   if path else ft.Container(width=180, height=120),
+            ends.append(ft.Column([self.picture(("end", label, str(path)), lambda path=path: ft.Image(
+                                       src=_image_bytes(path), width=180, height=120, fit=ft.BoxFit.COVER,
+                                       border_radius=2)) if path else ft.Container(width=180, height=120),
                                    ui.text(f"{label}: frame {frame} ({m.frame_time(frame)})", dim=True, size=13)],
                                   spacing=4))
         summary = (f"All {n} frames" if (first, last) == (1, n) else
@@ -1149,8 +1167,9 @@ class DoneScreen(Screen):
             if f.fix and f.kind != "ok":
                 body.append(ui.text("What to do: " + f.fix, size=13))
             if f.boxes and m.finished.thumbnail is not None:
-                body.append(ft.Image(src=_marked(m.finished.thumbnail, f.boxes, ui.t), width=420,
-                                     fit=ft.BoxFit.CONTAIN, border_radius=2))
+                body.append(self.picture(("marked", id(m.finished), f.title, str(f.boxes)), lambda f=f: ft.Image(
+                    src=_marked(m.finished.thumbnail, f.boxes, ui.t), width=420, fit=ft.BoxFit.CONTAIN,
+                    border_radius=2)))
             rows.append(ft.Container(ft.Row([badge, ft.Column(body, spacing=4, expand=True)],
                                             vertical_alignment=ft.CrossAxisAlignment.START),
                                      padding=ft.Padding(0, 10, 0, 10),
@@ -1165,8 +1184,9 @@ class DoneScreen(Screen):
         self._flicker_refresh()
         return [ui.text("Flicker map", size=17),
                 ui.text("Your film's leftover flicker in one picture: each frame gives one strip, left to right, "
-                        "magnified five times. Even all the way across means steady; a stripe is a frame that still "
-                        "jumps.", dim=True, size=13),
+                        "magnified five times. Even all the way across means steady. A stripe right across the sky "
+                        "is a frame that still jumps; one strongest where things move is traffic or people.",
+                        dim=True, size=13),
                 self.flicker_box]
 
     def _flicker_refresh(self) -> None:

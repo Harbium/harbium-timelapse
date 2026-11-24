@@ -116,6 +116,7 @@ class AppModel:
         self.export_view_status = ""
         self.export_cursor = 0
         self.wipe = 0.5
+        self._keyframe_thumbs = {}            # frame -> its thumbnail, once found
         self.keyframes = None                 # [{"frame": i, "reason": why}], or None before any are chosen
         self.keyframes_state = ""             # "", "chosen" (not labelled yet), "labelled", "blended"
 
@@ -1079,14 +1080,21 @@ class AppModel:
         self._run("Blending", lambda t: self.s.blend_keyframes(editor, seq), done)
 
     def keyframe_thumb(self, frame: int):
-        """A small picture of the frame, from its preview (None if there isn't one yet)."""
+        """A small picture of the frame, from its preview (None if there isn't one yet). Remembered once found:
+        the keyframe list asks on every refresh."""
+        found = self.__dict__.setdefault("_keyframe_thumbs", {})
+        if frame in found:
+            return found[frame]
         from ... import previews
         from ...app.thumbs import thumbnail
         try:
             source = previews._file(self.opened.seq[frame].path)
-            return thumbnail(source, 160) if source is not None and source.exists() else None
+            path = thumbnail(source, 160) if source is not None and source.exists() else None
         except (OSError, IndexError, ValueError):
-            return None
+            path = None
+        if path is not None:
+            found[frame] = path
+        return path
 
     # --- exporting through RapidRAW's command line ------------------------------------------------------------
 

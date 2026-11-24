@@ -51,3 +51,28 @@ def test_every_screen_builds_at_this_width(bare_raws, monkeypatch, width):  # no
     full.open()
     assert full.seq.full and full.seq.WIDTH <= width
     full.close()
+
+
+def test_refreshing_reuses_pictures_instead_of_reloading_them(bare_raws, monkeypatch):  # noqa: F811
+    """Regression: every refresh (many a second during playback or a job) made new picture controls for the
+    keyframe list, and each new one flashed white while it loaded."""
+    from harbium_timelapse import previews
+    monkeypatch.setattr(previews, "load_small", lambda path, longest: np.full((40, 60, 3), 0.1))
+    m = opened(bare_raws)
+    m.choose_editor("rapidraw")
+    m.wait()
+    m.go("prepare")
+    m.wait()
+    m.go("grade")
+    m.wait()
+    m.add_keyframe(0)
+    screen = views.SCREENS["grade"](stub_view(m, 1600))
+    screen.build()
+    panel = screen.keys
+    before = list(panel.body.controls)
+    for _ in range(5):
+        screen.refresh()
+    assert panel.body.controls == before and all(a is b for a, b in zip(panel.body.controls, before))
+    calls = []
+    first = screen.picture("k", lambda: calls.append(1) or object())
+    assert screen.picture("k", lambda: calls.append(1) or object()) is first and calls == [1]
