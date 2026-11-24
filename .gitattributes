@@ -1,0 +1,4 @@
+# Test samples are compared byte for byte: never convert their line endings on checkout (Git for Windows would).
+tests/**/fixtures/** -text
+*.rrdata -text
+*.xmp -text

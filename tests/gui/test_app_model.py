@@ -272,17 +272,14 @@ def test_keyframes_already_labelled_in_rapidraw_are_picked_up(bare_raws):
 
 
 def test_export_with_rapidraw_goes_straight_on_to_finish(bare_raws, tmp_path, monkeypatch):
-    import sys as _sys
-    sys_path = tmp_path / "RapidRAW.exe"
+
     import importlib.util
     from pathlib import Path as _Path
     spec = importlib.util.spec_from_file_location(
         "rapidraw_stand_in", _Path(__file__).parent.parent / "app" / "test_rapidraw_export.py")
     stand_in = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(stand_in)
-    FAKE = stand_in.FAKE
-    sys_path.write_text(FAKE.format(python=_sys.executable), encoding="utf-8")
-    sys_path.chmod(0o755)
+    sys_path = stand_in.make_stand_in(tmp_path / "bin")
     monkeypatch.setattr(session, "find_rapidraw", lambda: sys_path)
     m = opened(bare_raws)
     m.choose_editor("rapidraw")
@@ -298,16 +295,14 @@ def test_keyframes_edited_after_blending_are_caught_before_exporting(bare_raws, 
     """Regression: glow and halation removed from every keyframe still showed in the export: the frames between
     them held the previous blend, and the Grade screen had forgotten the keyframes, so nothing said so."""
     import importlib.util
-    import sys as _sys
+
     from pathlib import Path as _Path
     from harbium_timelapse.editors.rapidraw.sidecar import read_sidecar, write_sidecar
     spec = importlib.util.spec_from_file_location(
         "rapidraw_stand_in", _Path(__file__).parent.parent / "app" / "test_rapidraw_export.py")
     stand_in = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(stand_in)
-    program = tmp_path / "RapidRAW.exe"
-    program.write_text(stand_in.FAKE.format(python=_sys.executable), encoding="utf-8")
-    program.chmod(0o755)
+    program = stand_in.make_stand_in(tmp_path / "bin")
     monkeypatch.setattr(session, "find_rapidraw", lambda: program)
 
     m = opened(bare_raws)

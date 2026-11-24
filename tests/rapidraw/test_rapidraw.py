@@ -137,7 +137,21 @@ def test_undo_restores_every_sidecar_byte_for_byte(tmp_path):
     apply(plan(load(tmp_path), raw_brightness=sunset(40) + jitter(40)))
     assert [sidecar_path(i).read_bytes() for i in images] != originals
     assert undo(tmp_path) == 40
-    assert [sidecar_path(i).read_bytes() for i in images] == originals
+    assert [i.name for i, b in zip(images, originals) if sidecar_path(i).read_bytes() != b] == []   # which differ
+
+
+def test_undo_is_byte_for_byte_for_files_with_windows_line_endings(tmp_path):
+    """Regression (GitHub's Windows run): Git had given the sample edit files Windows line endings, and undo
+    rewrote them with Unix ones. Whatever endings a file has, every rewrite keeps them."""
+    images = make_sequence(tmp_path, 40, exposures=np.round(np.linspace(0, 1, 40), 2))
+    for i in images:
+        raw = sidecar_path(i).read_bytes().replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
+        sidecar_path(i).write_bytes(raw)
+    originals = [sidecar_path(i).read_bytes() for i in images]
+    apply(plan(load(tmp_path), raw_brightness=sunset(40) + jitter(40)))
+    assert all(b"\r\n" in sidecar_path(i).read_bytes() for i in images)        # kept through the corrections
+    assert undo(tmp_path) == 40
+    assert [i.name for i, b in zip(images, originals) if sidecar_path(i).read_bytes() != b] == []   # which differ
 
 
 def test_untouched_copies_are_kept(tmp_path):

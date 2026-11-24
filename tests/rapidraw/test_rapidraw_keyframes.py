@@ -173,7 +173,7 @@ def test_restore_puts_every_sidecar_back_byte_for_byte(sunset_folder):
     apply(plan(load(folder), raw_brightness=sunset(60) + jitter(60)))
     assert [sidecar_path(i).read_bytes() for i in images] != before
     restore(folder)
-    assert [sidecar_path(i).read_bytes() for i in images] == before
+    assert [i.name for i, b in zip(images, before) if sidecar_path(i).read_bytes() != b] == []   # which differ
 
 
 def test_a_keyframe_missing_settings_only_holds_those_settings(sunset_folder):
@@ -235,7 +235,7 @@ def test_keyframes_are_never_rewritten(sunset_folder):
     keys = [images[0], images[30], images[59]]
     before = [sidecar_path(i).read_bytes() for i in keys]
     blend(load(folder))
-    assert [sidecar_path(i).read_bytes() for i in keys] == before
+    assert [i.name for i, b in zip(keys, before) if sidecar_path(i).read_bytes() != b] == []   # which differ
 
 
 def test_flat_line_clipping_blends(sunset_folder):

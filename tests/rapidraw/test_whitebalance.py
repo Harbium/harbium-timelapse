@@ -93,7 +93,7 @@ def test_undo_puts_back_null(folder):
     apply_white_balance(seq, plan_white_balance(seq))
     apply_white_balance(seq, plan_white_balance(seq, 5600))           # twice: undo goes to the true original
     undo_white_balance(seq)
-    assert [sidecar_path(i).read_bytes() for i in images] == before
+    assert [i.name for i, b in zip(images, before) if sidecar_path(i).read_bytes() != b] == []   # which differ
 
 
 def test_survives_deflicker_undo_and_rebuild(folder):

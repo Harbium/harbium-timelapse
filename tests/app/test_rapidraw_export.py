@@ -32,13 +32,26 @@ print("Headless export completed successfully.", flush=True)
 '''
 
 
+def make_stand_in(folder):
+    """The stand-in as something the system can run: on Linux a script with a #! line; on Windows (which
+    ignores #! and won't run a script named .exe) the script beside a .cmd that calls Python with it."""
+    import os
+    from pathlib import Path
+    folder = Path(folder)
+    folder.mkdir(parents=True, exist_ok=True)
+    script = folder / "rapidraw_stand_in.py"
+    script.write_text(FAKE.format(python=sys.executable), encoding="utf-8")
+    if os.name == "nt":
+        program = folder / "RapidRAW.cmd"
+        program.write_text(f'@"{sys.executable}" "{script}" %*\r\n', encoding="utf-8")
+        return program
+    script.chmod(script.stat().st_mode | stat.S_IEXEC)
+    return script
+
+
 @pytest.fixture
 def fake_rapidraw(tmp_path):
-    program = tmp_path / "bin" / "RapidRAW.exe"
-    program.parent.mkdir()
-    program.write_text(FAKE.format(python=sys.executable), encoding="utf-8")
-    program.chmod(program.stat().st_mode | stat.S_IEXEC)
-    return program
+    return make_stand_in(tmp_path / "bin")
 
 
 def raws(folder, n=6):

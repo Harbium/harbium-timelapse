@@ -45,10 +45,18 @@ def dump(data: dict) -> str:
 
 
 def write_sidecar(image: Path, data: dict) -> None:
-    """Write atomically: a crash mid-write never leaves a half-written sidecar."""
+    """Write atomically: a crash mid-write never leaves a half-written sidecar. The file keeps the line endings
+    it already had (a file another tool wrote with Windows endings stays that way, so undo is byte for byte);
+    a new file gets RapidRAW's own, LF."""
     path = sidecar_path(image)
+    text = dump(data)
+    try:
+        if b"\r\n" in path.read_bytes():
+            text = text.replace("\n", "\r\n")
+    except OSError:
+        pass                                    # a new file
     temp = path.with_name(path.name + ".tmp")  # doesn't match RapidRAW's *.rrdata scan
-    temp.write_text(dump(data), encoding="utf-8", newline="")   # RapidRAW's line endings (LF), even on Windows
+    temp.write_text(text, encoding="utf-8", newline="")         # exactly these endings, even on Windows
     os.replace(temp, path)
 
 
