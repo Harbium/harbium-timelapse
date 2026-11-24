@@ -786,7 +786,40 @@ class AppModel:
         if not self.can_finish:
             return
         export = Path(self.project.export)
+        if self._is_render(export) and self.rapidraw_program is not None:
+            # Frames this app rendered: render again first, in the format these settings need, only frames whose
+            # grade changed (none, if nothing did), then finish.
+            seq, program, deep = self.opened.seq, self.rapidraw_program, self.renders_deep(self.out)
+
+            def done(result):
+                rendered, planned, finished = result
+                self.project.export = str(rendered)
+                self.project.save()
+                self._finished((planned, finished))
+            self._run("Exporting and finishing",
+                      self._finish_work(lambda t: self.s.render_with_rapidraw(seq, deep, tracker=t, program=program)),
+                      done)
+            return
         self._run("Finishing", self._finish_work(lambda t: export), lambda r: self._finished(r[1:]))
+
+    def _is_render(self, folder: Path) -> bool:
+        """One of this app's render folders for the open sequence (either format)."""
+        if self.opened is None:
+            return False
+        try:
+            return Path(folder).resolve() in {self.s.render_folder_for(self.opened.seq.folder, d).resolve()
+                                              for d in (False, True)}
+        except OSError:
+            return False
+
+    def close_folder(self) -> None:
+        """Back to the start screen, to open another folder."""
+        if self.job is not None:
+            return
+        self._reset_project_state()
+        self.opened, self.project = None, None
+        self.screen = "start"
+        self.changed()
 
     # --- Export and finish: render through RapidRAW, then finish, in one run -----------------------------------
 
@@ -859,9 +892,16 @@ class AppModel:
             self.project.save()
 
         if not finish:
+            if self.s.render_needs(seq, deep) == 0:          # already rendered: straight to the options
+                kept(folder)
+                self.use_export(folder)
+                return
+
             def rendered(export):
                 kept(export)
                 self.use_export(export)
+            self._notice("Rendering the frames first: the options work from them. Only frames you've changed are "
+                         "ever rendered again.")
             self._run("Rendering with RapidRAW", render, rendered)
             return
 

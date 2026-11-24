@@ -371,7 +371,11 @@ class FolderScreen(Screen):
             where, words = m.resume
             resume = [ui.panel(ft.Row([ui.text(words), ui.secondary("Continue", lambda e: m.go(where))],
                                       alignment=ft.MainAxisAlignment.SPACE_BETWEEN))]
-        return ft.Column([ui.title(Path(m.opened.seq.folder).name, 30), facts, *resume,
+        title = ft.Row([ui.title(Path(m.opened.seq.folder).name, 30),
+                        ui.secondary("Open another folder", lambda e: m.close_folder())],
+                       alignment=ft.MainAxisAlignment.SPACE_BETWEEN, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                       width=900)
+        return ft.Column([title, facts, *resume,
                           ui.text("Checks", size=14), *cards, ft.Row(actions, alignment=ft.MainAxisAlignment.END)],
                          spacing=14, width=900)
 

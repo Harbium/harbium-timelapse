@@ -466,3 +466,34 @@ def test_export_and_finish_refuses_without_the_disk_space(bare_raws, tmp_path, m
     m.screen = "grade"
     m.export_and_finish("master")                                         # 16-bit: ~120 MB a frame
     assert m.screen == "grade" and m.job is None and "GB" in m.message and "Share" in m.message
+
+
+def test_open_another_folder_goes_back_to_the_start(bare_raws):
+    m = opened(bare_raws)
+    m.close_folder()
+    assert m.screen == "start" and m.opened is None and m.project is None
+
+
+@pytest.mark.skipif(not shutil.which("ffmpeg"), reason="needs ffmpeg")
+def test_more_options_opens_finish_without_rendering_again_and_finish_renders_what_its_settings_need(
+        bare_raws, tmp_path, monkeypatch):
+    pytest.importorskip("tifffile")
+    _stand_in(tmp_path, monkeypatch)
+    m = opened(bare_raws)
+    m.choose_editor("rapidraw")
+    m.wait()
+    m.out.video_path = str(tmp_path / "film.mp4")
+    m.export_and_finish("share")                          # rendered once (JPEG) and finished
+    m.wait()
+    asked = bare_raws.parent / "rapidraw-args.txt"
+    asked.unlink()
+    m.screen = "grade"
+    m.export_and_finish("share", finish=False)            # More options: already rendered, so straight there
+    assert m.screen == "finish" and m.job is None and not asked.exists()
+    m.choose_preset("master")                             # chosen on the Finish screen: 10-bit, so 16-bit frames
+    m.out.video_path = str(tmp_path / "master.mkv") if m.out.suffix == ".mkv" else str(tmp_path / ("master" + m.out.suffix))
+    m.start_finish()
+    m.wait()
+    assert m.screen == "done", m.message
+    assert "--format tiff --tiff-bit-depth 16" in asked.read_text()
+    assert m.project.export.endswith("sunset render 16-bit")
