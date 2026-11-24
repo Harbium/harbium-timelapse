@@ -402,6 +402,12 @@ def test_the_review_viewer_loads_the_exported_frames(folder, tmp_path):
     assert len(m.export_view) == len(m.planned.frames) and m.export_view.gains.shape == (len(m.planned.frames), 3)
     m.set_export_cursor(3)
     assert m.export_view_image().ndim == 3
+    until(lambda: m.flicker_picture is not None)                           # the flicker map, in memory
+    assert m.flicker_picture.shape == m.export_view.frames[0].shape and m.flicker_saved is None
+    pytest.importorskip("flet")
+    from test_screens_build import stub_view
+    from harbium_timelapse.gui.views import app as views
+    views.SCREENS["done"](stub_view(m, 1600)).build()                    # the Review screen builds with it
 
 
 def test_only_the_viewer_on_screen_keeps_its_frames(bare_raws, monkeypatch):
@@ -497,3 +503,12 @@ def test_more_options_opens_finish_without_rendering_again_and_finish_renders_wh
     assert m.screen == "done", m.message
     assert "--format tiff --tiff-bit-depth 16" in asked.read_text()
     assert m.project.export.endswith("sunset render 16-bit")
+
+
+def test_the_flicker_map_is_saved_only_when_asked(bare_raws, tmp_path):
+    m = opened(bare_raws)
+    m.project.export = str(tmp_path / "sunset render")
+    m.flicker_picture = np.zeros((20, 30, 3), np.uint8)
+    assert not list(tmp_path.glob("*flicker-map*"))                         # made, not saved
+    m.save_flicker_map()
+    assert m.flicker_saved == tmp_path / "sunset render_flicker-map.jpg" and m.flicker_saved.exists()

@@ -110,6 +110,8 @@ class AppModel:
         self.view_status = ""
         self.cursor = 0                       # the playhead: the frame shown above the timeline
         self.view_mode = "after"              # after, before, wipe or flicker
+        self.flicker_picture = None           # the finished film's flicker map (in memory; saved only if asked)
+        self.flicker_saved = None
         self.export_view = None               # the Review screen's viewer: the exported (graded) frames
         self.export_view_status = ""
         self.export_cursor = 0
@@ -561,6 +563,7 @@ class AppModel:
         self.project.save()
         self.planned = self.finished = None
         self.export_view, self.export_cursor = None, 0
+        self.flicker_picture, self.flicker_saved = None, None
         self.screen = "finish"
         self._default_video_path()
         self.changed()
@@ -914,6 +917,7 @@ class AppModel:
     def _finished(self, result) -> None:
         self.planned, self.finished = result
         self.export_view, self.export_cursor = None, 0          # a new run: the Review viewer loads it afresh
+        self.flicker_picture, self.flicker_saved = None, None
         t = self.finished.timings
         if t.get("elapsed") and t.get("frames"):
             remember_speed(self.out, t["elapsed"] / t["frames"])     # for the next estimate of this kind
@@ -1230,6 +1234,7 @@ class AppModel:
             elif isinstance(e, Done):
                 self._export_view_loading = False
                 self.export_view, self.export_view_status = e.result, ""
+                self.make_flicker_map()
             elif isinstance(e, Failed):
                 self._export_view_loading = False
                 self.export_view_status = f"The viewer couldn't load: {e.message}"
@@ -1283,3 +1288,34 @@ class AppModel:
             return None
         one = SequenceFrames([picture], gains=[self.export_view.gains[i]], tone=self.export_view.tone)
         return one.image(0, self.view_mode, self.wipe)
+
+    # --- the flicker map: one picture of the film's leftover flicker --------------------------------------------
+
+    def make_flicker_map(self) -> None:
+        """The finished film's flicker map, in memory (from the Review viewer's frames, with Finish's correction)."""
+        if self.export_view is None or self.flicker_picture is not None:
+            return
+        frames = self.export_view
+        from .viewer import flicker_map
+
+        def work(t):
+            return flicker_map(frames, t.stage("Flicker map"))
+
+        def done(picture):
+            self.flicker_picture = picture
+        self._run("Flicker map", work, done)
+
+    def save_flicker_map(self) -> None:
+        """Save the flicker map beside the film (only ever when asked)."""
+        if self.flicker_picture is None:
+            return
+        from PIL import Image
+        base = self.finished.video if self.finished and self.finished.video else Path(self.project.export)
+        target = base.with_name(base.stem + "_flicker-map.jpg")
+        try:
+            Image.fromarray(self.flicker_picture).save(target, quality=93)
+            self.flicker_saved = target
+            self._notice(f"Saved the flicker map: {target}")
+        except OSError as e:
+            self._notice(f"Couldn't save the flicker map: {e}", "error")
+        self.changed()

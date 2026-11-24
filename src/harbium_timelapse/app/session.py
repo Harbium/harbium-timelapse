@@ -280,7 +280,7 @@ def write_export(planned: Planned, out: Path | None = None, video: Path | None =
                  width: int | None = None, codec: str = "h264", dither: bool = True, fmt: str | None = None,
                  settings: dict | None = None, tracker: Tracker | None = None, options: VideoOptions | None = None,
                  jpeg_quality: int = JPEG_QUALITY, first: int | None = None, last: int | None = None,
-                 strip_x: float = 0.5, slice_mode: str = "left-right") -> Finished:
+                 strip_x: float = 0.5, slice_mode: str = "left-right", save_slice: bool = False) -> Finished:
     """Write corrected frames and/or the video, check them, review them, and save the run report.
     ``first``/``last`` (1-based) trim what's written; the smoothing still comes from the whole sequence."""
     if options is not None:
@@ -317,7 +317,10 @@ def write_export(planned: Planned, out: Path | None = None, video: Path | None =
     # image-sequence importers (and finish itself) would take it for a frame.
     strip_path = (Path(out).parent / (Path(out).name + ".timelapse-slice.jpg") if out else
                   Path(video).with_name(Path(video).stem + ".timelapse-slice.jpg"))
+    # Saved only when asked for (save_slice): nothing is left beside the film that nobody requested.
     try:
+        if not save_slice:
+            raise ValueError("not asked for")
         from PIL import Image
         from ..timeslice import stack, to_8bit
         picture = stack(to_8bit(columns["slice_before"].picture()), to_8bit(columns["slice_after"].picture()))

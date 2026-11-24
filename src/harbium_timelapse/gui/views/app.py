@@ -1158,37 +1158,40 @@ class DoneScreen(Screen):
         return [ui.text("Checks", size=14), ft.Column(rows, spacing=0)]
 
     def _strip(self) -> list:
-        """The time strip: a quick-to-load view to zoom and pan, and the full-detail file a click away."""
+        """The flicker map: the film's leftover flicker in one picture, made in memory, saved only when asked."""
+        ui = self.ui
+        self.flicker_box = ft.Column(spacing=8)
+        self._flicker_shown = None
+        self._flicker_refresh()
+        return [ui.text("Flicker map", size=17),
+                ui.text("Your film's leftover flicker in one picture: each frame gives one strip, left to right, "
+                        "magnified five times. Even all the way across means steady; a stripe is a frame that still "
+                        "jumps.", dim=True, size=13),
+                self.flicker_box]
+
+    def _flicker_refresh(self) -> None:
         ui, m = self.ui, self.m
-        path = m.finished.strip
-        if not path or "slice_before" not in m.finished.strip_columns:
-            return []
-        self.strip_view = ft.Image(src=b"", width=880, fit=ft.BoxFit.CONTAIN)
-        self.view.page.run_task(self._load_strip)
-        return [ui.text("Time slice", size=14),
-                ui.text("Each frame gives one strip of the picture. Jumps show as stripes.", dim=True, size=13),
-                ft.Container(ft.InteractiveViewer(content=self.strip_view, min_scale=1, max_scale=12,
-                                                  boundary_margin=ft.Margin.all(40)),
-                             bgcolor=ui.t["surround"], padding=8, border_radius=2, width=896, height=420,
-                             clip_behavior=ft.ClipBehavior.HARD_EDGE),
-                ft.Row([ui.secondary("Open full size", lambda e: open_path(path)),
-                        ui.secondary("Show in folder", lambda e: open_path(path, select=True)),
-                        ui.text(path.name, dim=True, mono=True, size=13)], spacing=10)]
-
-    async def _load_strip(self):
-        import io
-        from PIL import Image
-        cols = self.m.finished.strip_columns
-
-        def make() -> bytes:
-            from ...timeslice import stack, to_8bit
-            img = Image.fromarray(stack(to_8bit(cols["slice_before"].picture()), to_8bit(cols["slice_after"].picture())))
-            img.thumbnail((1760, 2400))
+        if not hasattr(self, "flicker_box"):
+            return
+        if m.flicker_picture is None:
+            self.flicker_box.controls = [ui.text("Making the flicker map...", dim=True, size=13)]
+            return
+        if self._flicker_shown is not m.flicker_picture:
+            import io
+            from PIL import Image
             buf = io.BytesIO()
-            img.save(buf, format="JPEG", quality=88)
-            return buf.getvalue()
-        self.strip_view.src = await asyncio.to_thread(make)
-        self.view.page.update()
+            Image.fromarray(m.flicker_picture).save(buf, format="JPEG", quality=90)
+            self._flicker_image = ft.Image(src=buf.getvalue(), width=880, fit=ft.BoxFit.CONTAIN)
+            self._flicker_shown = m.flicker_picture
+        saved = m.flicker_saved
+        self.flicker_box.controls = [
+            ft.Container(ft.InteractiveViewer(content=self._flicker_image, min_scale=1, max_scale=12,
+                                              boundary_margin=ft.Margin.all(40)),
+                         bgcolor=ui.t["surround"], padding=8, border_radius=2, width=896,
+                         clip_behavior=ft.ClipBehavior.HARD_EDGE),
+            ft.Row([ui.secondary("Save flicker map", lambda e: m.save_flicker_map()),
+                    *([ui.secondary("Show in folder", lambda e: open_path(saved, select=True)),
+                       ui.text(saved.name, dim=True, mono=True, size=13)] if saved else [])], spacing=10, wrap=True)]
 
     def on_key(self, e):
         self.seq.on_key(e)
@@ -1200,6 +1203,7 @@ class DoneScreen(Screen):
         ui, m = self.ui, self.m
         if getattr(self, "seq", None):
             self.seq.refresh()
+        self._flicker_refresh()
         items = m.worth_a_look
         if not items:
             self.flags.controls = [ui.text("No frames stand out.",

@@ -106,6 +106,8 @@ def _main(argv: list[str] | None = None) -> int:
     fin.add_argument("--jpeg-quality", type=int, default=95, help="quality of corrected JPEG frames, 1-100 (default 95)")
     fin.add_argument("--no-dither", action="store_true",
                      help="round corrected 8-bit frames plainly instead of dithering (dither hides banding)")
+    fin.add_argument("--slice", action="store_true",
+                     help="also save a before/after time slice beside the output (off by default)")
     fin.add_argument("--brightness-only", action="store_true", help="leave colour exactly as exported")
     fin.add_argument("--dry-run", action="store_true", help="measure and report, write nothing")
     fin.add_argument("--csv", type=Path, help="save per-frame measurements and corrections")
@@ -271,6 +273,7 @@ def _finish(args) -> int:
                                chroma=args.chroma, prores_profile=args.prores_profile)
         options.check()
         done = session.write_export(planned, out=args.out, video=args.video, fps=args.fps, width=args.width,
+                                    save_slice=getattr(args, "slice", False),
                                     codec=args.codec, dither=not args.no_dither, fmt=args.format, options=options,
                                     jpeg_quality=args.jpeg_quality, first=args.first, last=args.last,
                                     settings={"window": args.window, "colour": not args.brightness_only},
@@ -289,7 +292,7 @@ def _finish(args) -> int:
     if done.where_the_time_went:
         print(f"  {done.where_the_time_went}")
     if done.strip:
-        print(f"  Time strip: {done.strip}")
+        print(f"  Time slice: {done.strip}")
     print(f"  Report: {done.report}" if done.report else "  (Couldn't save the run report.)")
     return 0
 

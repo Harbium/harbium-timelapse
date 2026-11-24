@@ -139,3 +139,19 @@ def test_flicker_x5_keeps_grain_calm():
     assert np.abs(shown - local).mean() < 3                       # close to the steady picture, no speckles
     tint_shown, tint_local = shown[..., 0] - shown[..., 2], local[..., 0] - local[..., 2]
     assert np.abs(tint_shown - tint_local).mean() < 2               # magnifying adds no colour of its own
+
+
+def test_the_flicker_map_is_even_for_a_steady_film_and_marks_a_jump_where_it_happens():
+    from harbium_timelapse.gui.models.viewer import flicker_map
+    steady = [reduce(LINEAR[0], 1.0)] * 12
+    even = flicker_map(SequenceFrames(steady)).astype(int)
+    assert np.abs(even - steady[0].astype(int)).mean() < 2                 # steady: just the picture
+    jumpy = list(steady)
+    jumpy[6] = reduce(LINEAR[0] * 2 ** 0.15, 1.0)                          # frame 7 jumps 0.15 stops
+    marked = flicker_map(SequenceFrames(jumpy)).astype(float).mean(axis=(0, 2))
+    plain = steady[0].astype(float).mean(axis=(0, 2))
+    edges = np.linspace(0, marked.size, 13).round().astype(int)
+    ratio = [marked[edges[i]:edges[i + 1]].mean() / plain[edges[i]:edges[i + 1]].mean() for i in range(12)]
+    assert ratio[6] > 1.2                                                  # a clear stripe at frame 7
+    assert all(abs(ratio[i] - 1) < 0.1 for i in range(12) if i != 6)      # its neighbours barely move
+    assert all(abs(ratio[i] - 1) < 0.02 for i in range(12) if abs(i - 6) > 2)   # the rest: steady

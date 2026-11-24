@@ -146,3 +146,19 @@ class SequenceFrames:
         if 0 < cut < before.shape[1]:
             out[:, max(0, cut - 1):cut + 1] = 255                  # the wipe line
         return out
+
+
+def flicker_map(frames: "SequenceFrames", progress=None) -> np.ndarray:
+    """One picture of the whole film's leftover flicker: a time slice (left to right) where each frame gives its
+    strip of its Flicker x5 picture. Even all the way across: steady. A stripe: a frame that still jumps, and
+    where it sits tells you when."""
+    n = len(frames)
+    h, w = frames.frames[0].shape[:2]
+    out = np.empty((h, w, 3), np.uint8)
+    edges = np.linspace(0, w, n + 1).round().astype(int)
+    for i in range(n):
+        a, b = edges[i], max(edges[i + 1], edges[i] + 1)
+        out[:, a:b] = frames.flicker(i)[:, a:b]
+        if progress:
+            progress(i + 1, n)
+    return out

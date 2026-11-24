@@ -32,7 +32,9 @@ def flickering(folder, n=24):
 
 def test_the_time_slice_is_saved_beside_the_frames_and_the_flicker_goes(tmp_path):
     flickering(tmp_path / "e")
-    done = session.write_export(session.plan_export(tmp_path / "e"), out=tmp_path / "out")
+    quiet = session.write_export(session.plan_export(tmp_path / "e"), out=tmp_path / "quiet")
+    assert quiet.strip is None and not (tmp_path / "quiet.timelapse-slice.jpg").exists()   # nothing unasked-for
+    done = session.write_export(session.plan_export(tmp_path / "e"), out=tmp_path / "out", save_slice=True)
     assert done.strip == tmp_path / "out.timelapse-slice.jpg" and done.strip.exists()
     assert len(finished_frames(tmp_path / "out")) == 24                 # never taken for a frame
     before = np.array([c.mean() for c in done.strip_columns["before"]])
