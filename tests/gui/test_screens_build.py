@@ -6,6 +6,8 @@ import types
 import numpy as np
 import pytest
 
+pytest.importorskip("flet")       # the interface: these tests need it, the bare job skips them
+
 from test_app_model import folder, opened, services, until, bare_raws  # noqa: F401  (fixtures)
 from harbium_timelapse.gui.models.timeline import Theme
 from harbium_timelapse.gui.theme import LIGHT

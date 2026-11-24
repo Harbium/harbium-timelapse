@@ -41,6 +41,7 @@ def test_suggested_keyframes_are_outlines_and_labelled_ones_solid():
 
 @pytest.fixture
 def panel():
+    pytest.importorskip("flet")                  # the interface: the bare job (no Flet) skips these
     from harbium_timelapse.gui.theme import LIGHT
     from harbium_timelapse.gui.views.app import UI, SequenceView
     seq = [types.SimpleNamespace(name=f"181A{834 + i:04d}.CR3", path=Path(f"/x/{i}")) for i in range(130)]

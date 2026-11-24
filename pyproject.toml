@@ -20,7 +20,8 @@ dependencies = [
 [project.optional-dependencies]
 raw = ["rawpy>=0.21"]
 tiff = ["tifffile>=2023.1"]
-dev = ["pytest>=8", "rawpy>=0.21"]
+dev = ["pytest>=8", "pytest-timeout>=2.3", "rawpy>=0.21"]
+gui = ["flet==1.0.5"]          # the app's interface; its tests skip without it
 
 [project.scripts]
 timelapse = "harbium_timelapse.cli:main"
@@ -36,4 +37,5 @@ lightroom = "harbium_timelapse.editors.lightroom.adapter:Lightroom"
 packages = ["src/harbium_timelapse"]
 
 [tool.pytest.ini_options]
+timeout = 300                  # a test that hangs fails after 5 minutes, naming where it waited
 testpaths = ["tests"]
