@@ -32,7 +32,7 @@ def explain(previous: np.ndarray, current: np.ndarray) -> list[str]:
     w = np.array([n for _, n in votes], dtype=np.float64)
     change, spread, split = M._steady_change(previous, current)
     event = spread > M.EVENT_SPREAD
-    out.append(f"  regions' spread (10th-90th): {spread:.2f} stops -> "
+    out.append(f"  regions' spread (middle half): {spread:.2f} stops -> "
                + (f"LIGHT EVENT (over {M.EVENT_SPREAD}): bridged; later frames compare with the last calm frame"
                   if event else "calm"))
     if event:

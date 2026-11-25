@@ -92,3 +92,24 @@ def test_uneven_flare_reaching_every_region_like_james_headlights_is_bridged():
     err = (m - m[0]) - (flicker - flicker[0])
     assert np.abs(err[22:]).max() < 0.02                       # nothing carried into the frames after it
     assert np.abs(err[20:22]).max() < 0.1                       # the event frames left as shot
+
+
+def test_people_close_to_the_camera_are_not_a_light_event_and_their_frames_flicker_is_corrected():
+    """Regression (James's dusk sequence, frames 64-66): people close to the camera pushed a few regions far out;
+    the 10th-90th spread crossed 1 stop, the frames were treated as light events and left as shot, and frame
+    64's flicker (an even 0.11-stop dip) stayed in the film as a flash."""
+    street = structured_scene()
+    g = np.random.default_rng(21)
+    chain = SteadyChain()
+    rows, cols = 6, 8
+    for i, f in enumerate(flicker):
+        img = street * 2 ** f
+        if 15 <= i <= 25:                                       # figures filling a few regions near the camera
+            for r, c in zip(g.integers(3, rows, 6), g.integers(0, cols, 6), strict=True):
+                ys, xs = slice(r * H // rows, (r + 1) * H // rows), slice(c * W // cols, (c + 1) * W // cols)
+                img[ys, xs] = img[ys, xs] * g.choice([0.15, 6.0])
+        chain.add(steady_input(np.clip(img * np.exp(rng.normal(0, 0.01, img.shape)), 0, 0.97)))
+    assert not any(e is not None and e[2] for e in chain.steps)          # never treated as a light event
+    m = chain.series(np.zeros(N))
+    err = (m - m[0]) - (flicker - flicker[0])
+    assert np.abs(err).max() < 0.03                                     # the flicker measured, so corrected

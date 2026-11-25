@@ -131,11 +131,14 @@ def steady_change(previous: np.ndarray | None, current: np.ndarray) -> float | N
     return steady_change_detail(previous, current)[0]
 
 
-EVENT_SPREAD = 1.0            # stops between the 10th and 90th percentile region: a light event, not the camera
+EVENT_SPREAD = 1.0            # stops across the middle half of the regions' votes: a light event, not the camera.
+# The middle half, not the 10th to 90th percentile: people close to the camera push a few regions far out (James's
+# dusk sequence: 11 ordinary frames went over 1 stop that way, and their flicker was left in), while headlights
+# move nearly every region (his sunset: 2.1 stops across the middle half; the dusk's people at most 0.56).
 
 
 def steady_change_detail(previous: np.ndarray | None, current: np.ndarray) -> tuple[float | None, float, bool]:
-    """``steady_change``, with how widely the regions disagreed (10th to 90th percentile, stops) and whether
+    """``steady_change``, with how widely the regions disagreed (across the middle half, stops) and whether
     a clear group of regions the light didn't reach decided it (the split-vote rule)."""
     if previous is None or previous.shape != current.shape:
         return None, 0.0, False
@@ -174,7 +177,7 @@ def _steady_change(previous: np.ndarray, current: np.ndarray) -> tuple[float | N
     if len(votes) >= MIN_VOTERS:
         v = np.array([x for x, _ in votes])
         change, split = _vote_detail(votes)
-        return change, float(np.percentile(v, 90) - np.percentile(v, 10)), split
+        return change, float(np.percentile(v, 75) - np.percentile(v, 25)), split
     return float(np.log2(current[still].sum() / previous[still].sum())), 0.0, False
 
 
@@ -268,8 +271,9 @@ class SteadyChain:
     is compared with the last one that could be, so one bad frame can't
     carry "unknown" into every frame after it. Skipped frames read as NaN.
 
-    A light event (headlights into the lens, a flash) spreads the regions' changes far apart (several stops;
-    flicker and even a turned vari-ND keep them within a few tenths). Such frames are bridged: the frames after
+    A light event (headlights into the lens, a flash) spreads the regions' changes far apart, nearly all of them
+    (two stops or more across the middle half; flicker, a turned vari-ND, or people walking close to the camera
+    keep the middle half within a few tenths). Such frames are bridged: the frames after
     are compared with the last calm frame before, so the event's errors can't be carried into every later frame,
     and the event frames themselves are left as shot, at the level between their calm neighbours, unless a
     clear group of regions the light didn't reach measured them. On James's sunset, headlight flare brightened
