@@ -138,19 +138,33 @@ class AppModel:
 
     # --- jobs -----------------------------------------------------------------------------------
 
+    # Jobs that run in the background, for convenience: anything you ask for takes their place.
+    BACKGROUND = frozenset({"Measuring", "Flicker map"})
+
     def _run(self, name: str, work, on_done) -> bool:
-        if self.job is not None:
-            return False                                  # one job at a time
+        if self.job is not None:                          # one job at a time
+            if self.job.name in self.BACKGROUND and name not in self.BACKGROUND:
+                self._handle.cancel()                     # it gives way; whatever needs it later makes it again
+                self.job = self._handle = None
+            else:
+                if name not in self.BACKGROUND:           # never silently: say what's in the way
+                    self._notice(f"{self.job.name} is still running: wait for it, or Cancel it first.", "error")
+                    self.changed()
+                return False
         self.job = JobState(name)
         self.message = None
+        token = object()                                  # this job's messages, and no other's
+        self._token = token
 
         def on_event(event):
-            self.post(lambda: self._event(event, on_done))
+            self.post(lambda: self._event(event, on_done, token))
         self._handle = self._last_handle = self.runner.start(name, work, on_event)
         self.changed()
         return True
 
-    def _event(self, event, on_done) -> None:
+    def _event(self, event, on_done, token=None) -> None:
+        if token is not None and token is not getattr(self, "_token", None):
+            return                                        # from a job that was replaced: ignore
         if isinstance(event, Progress):
             if self.job is not None:
                 self.job.stage, self.job.done, self.job.total = event.stage, event.done, event.total
@@ -185,7 +199,7 @@ class AppModel:
         return self.project is not None and STAGES.index(self.project.stage) >= STAGES.index(stage)
 
     def can_go(self, screen: str) -> bool:
-        if self.job is not None:
+        if self.job is not None and self.job.name not in self.BACKGROUND:
             return False
         if screen == "start":
             return True
@@ -228,6 +242,8 @@ class AppModel:
             self.view = None
         elif screen in ("prepare", "grade"):
             self.export_view = None
+        if screen == "done":
+            self.make_flicker_map()                        # made again if it gave way to something earlier
         if screen == "prepare":
             self._ensure_measured()
         elif screen == "grade":

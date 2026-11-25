@@ -70,9 +70,14 @@ def test_refreshing_reuses_pictures_instead_of_reloading_them(bare_raws, monkeyp
     screen.build()
     panel = screen.keys
     before = list(panel.body.controls)
+    buttons = list(screen.seq.controls.controls)          # the viewer's Play, Loop, After, Before, Wipe...
     for _ in range(5):
         screen.refresh()
     assert panel.body.controls == before and all(a is b for a, b in zip(panel.body.controls, before))
+    assert all(a is b for a, b in zip(screen.seq.controls.controls, buttons, strict=True))   # hover and clicks survive
+    screen.seq._mode("before")
+    screen.refresh()
+    assert screen.seq.controls.controls[3] is not buttons[3]                                 # a real change rebuilds
     calls = []
     first = screen.picture("k", lambda: calls.append(1) or object())
     assert screen.picture("k", lambda: calls.append(1) or object()) is first and calls == [1]

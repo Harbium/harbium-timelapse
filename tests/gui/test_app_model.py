@@ -512,3 +512,32 @@ def test_the_flicker_map_is_saved_only_when_asked(bare_raws, tmp_path):
     assert not list(tmp_path.glob("*flicker-map*"))                         # made, not saved
     m.save_flicker_map()
     assert m.flicker_saved == tmp_path / "sunset render_flicker-map.jpg" and m.flicker_saved.exists()
+
+
+def test_background_work_gives_way_to_what_you_ask_for_and_a_main_job_in_the_way_is_named(bare_raws):
+    """Regression: pressing Export and finish while measuring or the flicker map ran did nothing, silently."""
+    import threading
+    m = opened(bare_raws)
+    release = threading.Event()
+
+    def slow(t):
+        while not release.wait(0.02):
+            t.token.check()                                 # stops when cancelled
+        return "late"
+    late = []
+    m._run("Measuring", slow, late.append)                  # background work holding the slot
+    started = m._run("Blending", lambda t: "done", lambda r: setattr(m, "blended_result", r))
+    assert started                                          # it gave way straight away
+    m.wait()
+    release.set()
+    time.sleep(0.2)
+    assert getattr(m, "blended_result", None) == "done" and late == []   # the replaced job's result is ignored
+    assert m.job is None
+
+    release.clear()
+    m._run("Exporting and finishing", slow, lambda r: None)  # a main job in the way...
+    assert not m._run("Blending", lambda t: 1, lambda r: None)
+    assert "Exporting and finishing is still running" in m.message   # ...is named, never silent
+    m.cancel()
+    release.set()
+    m.wait()

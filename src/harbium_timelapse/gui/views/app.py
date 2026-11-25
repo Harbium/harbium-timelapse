@@ -606,18 +606,8 @@ class SequenceView:
         keys = [k["frame"] for k in (self.m.keyframes or [])] if self.with_keyframes else []
         return f"{names[i]}  ·  frame {i + 1} of {len(names)}" + ("  ·  keyframe" if i in keys else "")
 
-    def refresh(self) -> None:
+    def _build_buttons(self, mode_button, keys) -> None:
         m, ui, src = self.m, self.ui, self.src
-        src.load()
-        self.status.value = src.status
-        self.status.visible = bool(src.status)
-        n = len(src.names)
-        self.scrub.max, self.scrub.divisions, self.scrub.value = max(1, n - 1), max(1, n - 1), src.cursor
-        self.label.value = self._label()
-        keys = [k["frame"] for k in (m.keyframes or [])] if self.with_keyframes else []
-
-        def mode_button(mode, words):
-            return (ui.primary if m.view_mode == mode else ui.secondary)(words, lambda e, md=mode: self._mode(md))
         self.controls.controls = [ui.primary("Pause" if self.playing else "Play", lambda e: self.play()),
                                   ui.secondary("Loop: on" if self.loop else "Loop: off", lambda e: self._loop()),
                                   *[mode_button(mode, words) for mode, words in self.MODES]]
@@ -632,8 +622,27 @@ class SequenceView:
             self.controls.controls.append(ui.secondary("Close full screen (Esc)", lambda e: FullView.current.close()))
         else:
             self.controls.controls.append(ui.secondary("Full screen", lambda e: self._full_screen()))
-        help_text = {"flicker": "Flicker ×5 magnifies any flicker left. Moving things smear.",
-                     "wipe": "Before on the left, After on the right."}.get(m.view_mode, "")
+
+    def refresh(self) -> None:
+        m, ui, src = self.m, self.ui, self.src
+        src.load()
+        self.status.value = src.status
+        self.status.visible = bool(src.status)
+        n = len(src.names)
+        self.scrub.max, self.scrub.divisions, self.scrub.value = max(1, n - 1), max(1, n - 1), src.cursor
+        self.label.value = self._label()
+        keys = [k["frame"] for k in (m.keyframes or [])] if self.with_keyframes else []
+
+        def mode_button(mode, words):
+            return (ui.primary if m.view_mode == mode else ui.secondary)(words, lambda e, md=mode: self._mode(md))
+        here = src.cursor in keys if self.with_keyframes else None
+        shown = (self.playing, self.loop, m.view_mode, here, self.full)
+        if shown == getattr(self, "_shown_buttons", None) and self.controls.controls:
+            pass          # unchanged: keep the buttons (a rebuilt button loses its hover, and a click mid-rebuild)
+        else:
+            self._shown_buttons = shown
+            self._build_buttons(mode_button, keys)
+        help_text = {"flicker": "Flicker ×5 magnifies any flicker left. Moving things smear.",                     "wipe": "Before on the left, After on the right."}.get(m.view_mode, "")
         keys_text = "Space: play · ← →: step (Shift: 10)" + (" · K: keyframe" if self.with_keyframes else "")
         source_note = ("Your export, before and after Finish." if isinstance(src, ExportSource) else
                        "RAW preview with Prepare's corrections, without your grade.")
