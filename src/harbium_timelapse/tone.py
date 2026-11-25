@@ -29,6 +29,7 @@ class ToneShares:
     levels: tuple[float, ...]
     shares: tuple[float, ...]
     bands: tuple[int, ...] = ()       # which of the five bands each level is (they can be skipped), for naming
+    flat_ends: bool = False           # past the end levels, hold the end shares (no trend to continue)
 
     def at(self, linear: np.ndarray) -> np.ndarray:
         """The share for each linear level: blended smoothly between bands, and past the end bands continuing
@@ -36,6 +37,8 @@ class ToneShares:
         lv = np.log2(np.maximum(np.asarray(linear, dtype=np.float64), 1e-6))
         x, y = np.array(self.levels), np.array(self.shares)
         out = np.interp(lv, x, y)
+        if self.flat_ends:
+            return np.clip(out, LEAST, MOST)                 # np.interp already holds the end values
         low, high = (y[1] - y[0]) / (x[1] - x[0]), (y[-1] - y[-2]) / (x[-1] - x[-2])
         out = np.where(lv < x[0], y[0] + low * (lv - x[0]), out)
         out = np.where(lv > x[-1], y[-1] + high * (lv - x[-1]), out)
@@ -46,7 +49,8 @@ class ToneShares:
         James's sunset the bright midtones of the sky glow needed most, the brightest highlights held down)."""
         bands = self.bands if len(self.bands) == len(self.shares) else tuple(range(len(self.shares)))
         most, least = int(np.argmax(self.shares)), int(np.argmin(self.shares))
-        name = lambda i: NAMES[bands[i]] if bands[i] < len(NAMES) else f"level {i + 1}"    # noqa: E731
+        name = lambda i: ("the rest of the picture" if bands[i] < 0 else            # noqa: E731
+                          NAMES[bands[i]] if bands[i] < len(NAMES) else f"level {i + 1}")
         ratio = self.shares[most] / max(self.shares[least], 1e-6)
         first = name(most)
         return f"{first[0].upper()}{first[1:]} got {ratio:.1f}x the correction of {name(least)}."
@@ -89,6 +93,19 @@ def tone_shares(tinies: list[np.ndarray], reference: np.ndarray) -> ToneShares |
         levels.append(float(np.median(ref[mask])))
         shares.append(float(np.clip(shrunk, LEAST, MOST)))
         bands.append(band)
-    if not clear or len(levels) < 2:
+    if not clear or not levels:
         return None
+    if len(levels) == 1:
+        # Only one level could be judged (the rest too busy, or too little flicker left to read them): it still
+        # gets its own share, and everything else the frame's own correction (share 1), as it would without
+        # tone-aware correction. On James's sunset, after a better RAW correction, only the highlights could be
+        # read (64% of the frame's flicker); with tone-aware off, one gain over-corrected the sky, 0.006 -> 0.019.
+        b = bands[0]
+        others = still & ((ref < edges[b]) | (ref >= edges[b + 1]))
+        if others.sum() < 10:
+            return None
+        anchor = float(np.median(ref[others]))
+        pairs = sorted([(levels[0], shares[0], b), (anchor, 1.0, -1)])
+        return ToneShares(tuple(p[0] for p in pairs), tuple(p[1] for p in pairs), tuple(p[2] for p in pairs),
+                          flat_ends=True)
     return ToneShares(tuple(levels), tuple(shares), tuple(bands))

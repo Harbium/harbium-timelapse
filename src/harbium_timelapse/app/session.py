@@ -261,8 +261,10 @@ def plan_export(folder: Path, window: int = 25, colour: bool = True, tracker: Tr
     if cached is not None:
         measured, motion = cached["measured"], float(cached["motion"][0])
         levels, shares, bands = cached.get("tone_levels"), cached.get("tone_shares"), cached.get("tone_bands")
+        flat = cached.get("tone_flat")
         tone = (ToneShares(tuple(map(float, levels)), tuple(map(float, shares)),
-                           tuple(map(int, bands)) if bands is not None else ())
+                           tuple(map(int, bands)) if bands is not None else (),
+                           flat_ends=bool(flat[0]) if flat is not None and len(flat) else False)
                 if levels is not None and len(levels) else None)
     else:
         meter = Meter(motion=True)
@@ -272,7 +274,8 @@ def plan_export(folder: Path, window: int = 25, colour: bool = True, tracker: Tr
         measure_cache.save(frames, "export-channels", {
             "measured": measured, "motion": np.full(len(frames), motion),
             "tone_levels": np.array(tone.levels if tone else []), "tone_shares": np.array(tone.shares if tone else []),
-            "tone_bands": np.array(tone.bands if tone else [], dtype=np.int64)})
+            "tone_bands": np.array(tone.bands if tone else [], dtype=np.int64),
+            "tone_flat": np.array([bool(tone.flat_ends) if tone else False])})
     return Planned(frames, plan_finish(frames, window=window, colour=colour, measured=measured, tone=tone), motion)
 
 

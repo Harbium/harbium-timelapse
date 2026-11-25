@@ -51,3 +51,24 @@ def test_a_contrasty_grade_is_corrected_level_by_level():
 def test_an_ungraded_sequence_is_corrected_exactly_as_before():
     tone, *_ = run(lambda x: x)
     assert tone is None
+
+
+def test_one_readable_level_still_gets_its_share_and_the_rest_stays_as_before():
+    """Regression (James's sunset after the better RAW correction): only the highlights could be read, at 64% of
+    the frame's flicker; tone-aware correction needed two readable levels, switched off, and one gain for the
+    whole frame over-corrected the sky (sun glow 0.006 -> 0.019 stops)."""
+    from harbium_timelapse.tone import tiny, tone_shares
+    g = np.random.default_rng(5)
+    levels = np.exp(g.uniform(np.log(0.003), np.log(0.6), (96, 144)))
+    bright = levels > np.percentile(levels, 85)
+    tinies = []
+    for f in flicker:
+        frame = levels * 2 ** f
+        busy = 2 ** g.normal(0, 0.5)                    # the levels below swing as a whole: traffic, lights
+        frame = np.where(bright, levels * 2 ** (0.6 * f), frame * busy)
+        tinies.append(tiny(np.repeat(np.clip(frame, 0, 0.96)[..., None], 3, -1)))
+    tone = tone_shares(tinies, np.array(flicker))
+    assert tone is not None and tone.flat_ends
+    assert abs(tone.shares[-1] - 0.6) < 0.15 and tone.shares[0] == 1.0          # highlights read; the rest as before
+    assert abs(float(tone.at(np.array([0.9]))[0]) - tone.shares[-1]) < 1e-9     # brightest: held, not extrapolated
+    assert float(tone.at(np.array([0.001]))[0]) == 1.0                          # darkest: the frame's own correction
