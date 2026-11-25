@@ -72,3 +72,23 @@ def test_veiling_flare_across_the_whole_frame_is_left_alone(flare):
     err = (m - m[0]) - (flicker - flicker[0])
     assert np.abs(err[20:22]).max() < 0.1                       # during: within a tenth of a stop
     assert np.abs(err[22:]).max() < 0.02                        # after: nothing carried forward
+
+
+def test_uneven_flare_reaching_every_region_like_james_headlights_is_bridged():
+    """Regression with the shape of James's real frames (diagnose_votes on 181A0960-0962): headlights brightened
+    every region, the sky included, by 0.4 to 5.5 stops, regions of the same brightness differing by stops.
+    Chained frame to frame, the frames after it were left 0.94 stops off and the event frames darkened 1.5."""
+    street = structured_scene()
+    g = np.random.default_rng(11)
+    patches = np.exp(g.normal(0, 1.0, (H // 8, W // 8))).repeat(8, 0).repeat(8, 1)        # very uneven
+    flare = 0.05 * patches * np.linspace(0.4, 1.6, W)[None, :]
+    chain = SteadyChain()
+    for i, f in enumerate(flicker):
+        img = street * 2 ** f
+        if i in (20, 21):
+            img = img + flare * (1.0 if i == 20 else 0.7)
+        chain.add(steady_input(np.clip(img * np.exp(rng.normal(0, 0.01, img.shape)), 0, 0.97)))
+    m = chain.series(np.zeros(N))
+    err = (m - m[0]) - (flicker - flicker[0])
+    assert np.abs(err[22:]).max() < 0.02                       # nothing carried into the frames after it
+    assert np.abs(err[20:22]).max() < 0.1                       # the event frames left as shot

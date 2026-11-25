@@ -1,6 +1,6 @@
 """Why did a frame measure the way it did? Measures frames exactly as Prepare does (same decoding, same input,
-same regional vote) and writes, for each frame, every region's vote and brightness, which rule decided the
-frame's change, and for the added-light (flare) rule which of its requirements held.
+same regional vote) and writes, for each frame, every region's vote and brightness, whether the frame counts as
+a light event (bridged over) and how it was measured.
 
     python benchmarks/diagnose_votes.py "C:/Users/James/Pictures/sunset-keys" 118 130 > votes.txt
 
@@ -30,20 +30,16 @@ def explain(previous: np.ndarray, current: np.ndarray) -> list[str]:
         return out + ["  too few voting regions: whole-frame ratio"]
     v, lv = np.array([x for x, _ in votes]), np.array(levels)
     w = np.array([n for _, n in votes], dtype=np.float64)
-    spread = np.percentile(v, 90) - np.percentile(v, 10)
-    corr = abs(np.corrcoef(lv, v)[0, 1]) if np.ptp(lv) > 0 and np.ptp(v) > 0 else 0.0
-    slope = np.polyfit(lv, v, 1, w=np.sqrt(w))[0] if np.ptp(lv) > 0 else 0.0
-    sign = 1.0 if np.median(v) >= 0 else -1.0
-    checks = [("votes spread (10th-90th)", f"{spread:.2f} stops", spread > M.ADDED_SPREAD, f"> {M.ADDED_SPREAD}"),
-              ("brightness range", f"{np.ptp(lv):.2f} stops", np.ptp(lv) >= M.ADDED_RANGE, f">= {M.ADDED_RANGE}"),
-              ("changes follow brightness", f"{corr:.2f}", corr >= M.ADDED_FOLLOW, f">= {M.ADDED_FOLLOW}"),
-              ("shrinking with brightness", f"{sign * slope:+.2f}", sign * slope < M.ADDED_SLOPE,
-               f"< {M.ADDED_SLOPE}")]
-    out.append("  added-light (flare) rule: " + ("APPLIES" if all(c[2] for c in checks) else "does not apply"))
-    for name, value, held, need in checks:
-        out.append(f"     {'ok ' if held else 'NO '} {name}: {value} (needs {need})")
-    out.append(f"  frame's change as measured: {M._vote(votes, levels):+.3f} stops "
-               f"(plain middle vote would be {M._vote(votes):+.3f})")
+    change, spread, split = M._steady_change(previous, current)
+    event = spread > M.EVENT_SPREAD
+    out.append(f"  regions' spread (10th-90th): {spread:.2f} stops -> "
+               + (f"LIGHT EVENT (over {M.EVENT_SPREAD}): bridged; later frames compare with the last calm frame"
+                  if event else "calm"))
+    if event:
+        out.append("  clear group of unlit regions: " + (f"yes, measured {change:+.3f} stops (kept only if within "
+                   f"{M.EVENT_TRUST} of its calm neighbours' line)" if split else "no: left as shot"))
+    else:
+        out.append(f"  frame's change as measured: {change:+.3f} stops")
     out.append("  regions, darkest to brightest: brightness (stops) -> change (stops), pixels")
     for k in np.argsort(lv):
         out.append(f"     {lv[k]:7.2f} -> {v[k]:+6.2f}   {int(w[k])}")

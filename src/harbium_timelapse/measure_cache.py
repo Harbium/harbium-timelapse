@@ -25,7 +25,7 @@ from pathlib import Path
 
 import numpy as np
 
-METHOD = "regional-vote-4"          # bump whenever measuring changes what it produces
+METHOD = "regional-vote-5"          # bump whenever measuring changes what it produces
 
 
 def _folder() -> Path:

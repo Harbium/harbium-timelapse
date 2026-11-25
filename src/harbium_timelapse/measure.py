@@ -128,6 +128,21 @@ EVENT_SIDE = 0.15             # ...if the group that changed least still holds t
 
 
 def steady_change(previous: np.ndarray | None, current: np.ndarray) -> float | None:
+    return steady_change_detail(previous, current)[0]
+
+
+EVENT_SPREAD = 1.0            # stops between the 10th and 90th percentile region: a light event, not the camera
+
+
+def steady_change_detail(previous: np.ndarray | None, current: np.ndarray) -> tuple[float | None, float, bool]:
+    """``steady_change``, with how widely the regions disagreed (10th to 90th percentile, stops) and whether
+    a clear group of regions the light didn't reach decided it (the split-vote rule)."""
+    if previous is None or previous.shape != current.shape:
+        return None, 0.0, False
+    return _steady_change(previous, current)
+
+
+def _steady_change(previous: np.ndarray, current: np.ndarray) -> tuple[float | None, float, bool]:
     """How much the still part of the scene changed between two frames, in stops.
 
     Per-pixel changes find the movers: pixels that changed far more (or less)
@@ -145,22 +160,22 @@ def steady_change(previous: np.ndarray | None, current: np.ndarray) -> float | N
     instead of dragging the whole frame with it. With fewer than five voting
     regions, it's the old whole-frame ratio.
     ``None`` if the two frames can't be compared."""
-    if previous is None or previous.shape != current.shape:
-        return None
     ok = (previous > BLACK) & (current > BLACK) & (previous < CLIPPED) & (current < CLIPPED)
     if ok.sum() < MIN_STEADY_PIXELS:
-        return None
+        return None, 0.0, False
     d = np.zeros(previous.shape)
     d[ok] = np.log2(current[ok]) - np.log2(previous[ok])
     typical = np.median(d[ok])
     spread = 1.4826 * np.median(np.abs(d[ok] - typical))
     still = ok & (np.abs(d - typical) < max(MOVER, 3 * spread))
     if still.sum() < MIN_STEADY_PIXELS:
-        return None
+        return None, 0.0, False
     votes, levels = _regional_changes(previous, current, ok, d)
     if len(votes) >= MIN_VOTERS:
-        return _vote(votes, levels)
-    return float(np.log2(current[still].sum() / previous[still].sum()))
+        v = np.array([x for x, _ in votes])
+        change, split = _vote_detail(votes)
+        return change, float(np.percentile(v, 90) - np.percentile(v, 10)), split
+    return float(np.log2(current[still].sum() / previous[still].sum())), 0.0, False
 
 
 def _regional_changes(previous: np.ndarray, current: np.ndarray, ok: np.ndarray,
@@ -192,13 +207,11 @@ def _regional_changes(previous: np.ndarray, current: np.ndarray, ok: np.ndarray,
     return votes, levels
 
 
-ADDED_SLOPE = -0.2            # votes falling this steeply with brightness (stops per stop): light was added
-ADDED_SPREAD = 0.3            # ...and spread this widely (stops)
-ADDED_RANGE = 2.0             # ...across regions spanning at least this much brightness (stops)
-ADDED_FOLLOW = 0.6            # ...with the changes following brightness this closely (correlation)
-
-
 def _vote(votes: list[tuple[float, int]], levels: list[float] | None = None) -> float:
+    return _vote_detail(votes)[0]
+
+
+def _vote_detail(votes: list[tuple[float, int]]) -> tuple[float, bool]:
     """The frame's change from the regions' votes.
 
     Flicker changes every region alike, so the votes cluster. A light event (headlights into the lens, a flash,
@@ -207,33 +220,6 @@ def _vote(votes: list[tuple[float, int]], levels: list[float] | None = None) -> 
     from the group that changed least. On James's sunset, headlights flooding most of the frame were measured
     1.9 stops too bright, and the whole frame (sky included) was darkened to match. Without such a split, the
     plain weighted middle vote, exactly as before."""
-    if levels is not None and len(levels) == len(votes) >= MIN_VOTERS:
-        # Light added across the frame (veiling flare from headlights into the lens): it brightens dark regions
-        # by many stops and bright ones barely, so the votes fall steeply with brightness, unlike an exposure
-        # change, which moves every region by the same stops. The brightest regions tell the truth about the
-        # camera. On James's sunset the flare brightened dark areas 3-4 stops; measured as over-exposure, it
-        # darkened the whole frame, leaving the sky 2-3 stops too dark.
-        v, lv = np.array([x for x, _ in votes]), np.array(levels)
-        w = np.array([n for _, n in votes], dtype=np.float64)
-        spread = np.percentile(v, 90) - np.percentile(v, 10)
-        # Only where there's a line to fit: regions spanning real differences of brightness, with the changes
-        # clearly following it (not scattering around it).
-        if spread > ADDED_SPREAD and np.ptp(lv) >= ADDED_RANGE and abs(np.corrcoef(lv, v)[0, 1]) >= ADDED_FOLLOW:
-            slope = np.polyfit(lv, v, 1, w=np.sqrt(w))[0]
-            sign = 1.0 if np.median(v) >= 0 else -1.0       # light switching on (changes up) or off (down)
-            if sign * slope < ADDED_SLOPE:                    # changes shrink with brightness, either way
-                # Exposure x g and added light F take a region from L to g(L + F): its change, as a ratio, is
-                # g(1 + F/L), a straight line in 1/L. Where 1/L reaches 0 (a region so bright the added light
-                # is nothing to it) the line gives the camera's own change, however strong the flare. Light
-                # switching off is the same with the ratio the other way up.
-                x, y = 2.0 ** -lv, 2.0 ** (sign * v)
-                intercept = np.polyfit(x, y, 1, w=np.sqrt(w))[1]
-                if intercept > 0:
-                    return float(sign * np.log2(intercept))
-                brightest = lv >= np.percentile(lv, 75)          # a fit that makes no sense: brightest regions
-                if brightest.sum() >= 3:
-                    return _weighted_median(list(zip(v[brightest].tolist(), w[brightest].astype(int).tolist(),
-                                                     strict=True)))
     values = np.array([v for v, _ in votes])
     order = np.argsort(values)
     v, w = values[order], np.array([n for _, n in votes], dtype=np.float64)[order]
@@ -243,8 +229,8 @@ def _vote(votes: list[tuple[float, int]], levels: list[float] | None = None) -> 
         groups = [(v[:cut], w[:cut]), (v[cut:], w[cut:])]
         calm = min(groups, key=lambda g: abs(float(np.average(g[0], weights=g[1]))))
         if calm[1].sum() >= EVENT_SIDE * w.sum():
-            return _weighted_median(list(zip(calm[0].tolist(), calm[1].tolist(), strict=True)))
-    return _weighted_median(votes)
+            return _weighted_median(list(zip(calm[0].tolist(), calm[1].tolist(), strict=True))), True
+    return _weighted_median(votes), False
 
 
 def _weighted_median(votes: list[tuple[float, int]], band: float = 0.2) -> float:
@@ -269,29 +255,54 @@ def measurable(values: np.ndarray) -> bool:
     return int(((v > BLACK) & (v < CLIPPED)).sum()) >= MIN_STEADY_PIXELS
 
 
+MAX_BRIDGE = 8                # event frames in a row before it counts as a lasting change (lights coming on)
+EVENT_TRUST = 0.1             # stops: an event frame measured further than this from its calm neighbours' line
+                              # was measured through the light (flare reaches even the least-lit regions)
+
+
 class SteadyChain:
     """Builds a brightness series from the still part of the scene, one frame
-    at a time, keeping only the last measurable frame in memory.
+    at a time, keeping only the last calm frame in memory.
 
     A frame that can't be measured (black, blown) is skipped: the next frame
     is compared with the last one that could be, so one bad frame can't
     carry "unknown" into every frame after it. Skipped frames read as NaN.
+
+    A light event (headlights into the lens, a flash) spreads the regions' changes far apart (several stops;
+    flicker and even a turned vari-ND keep them within a few tenths). Such frames are bridged: the frames after
+    are compared with the last calm frame before, so the event's errors can't be carried into every later frame,
+    and the event frames themselves are left as shot, at the level between their calm neighbours, unless a
+    clear group of regions the light didn't reach measured them. On James's sunset, headlight flare brightened
+    every region (the sky too) by 0.4 to 5.5 stops; chained frame to frame, the frames after it were left 0.94
+    stops off and the event frames were darkened 1.5 stops.
     """
 
     def __init__(self) -> None:
-        self.reference: np.ndarray | None = None
-        self.steps: list[float | None] = []
+        self.reference: np.ndarray | None = None      # the last calm frame
+        self.ref_index: int | None = None
+        self.bridging = 0
+        self.steps: list[tuple[float | None, int | None, bool] | None] = []
         self.usable: list[bool] = []
 
     def add(self, current: np.ndarray) -> None:
+        i = len(self.steps)
         if not measurable(current):
             self.steps.append(None)
             self.usable.append(False)
             return
-        step = None if self.reference is None else steady_change(self.reference, current)
-        self.steps.append(step)
         self.usable.append(True)
-        self.reference = current
+        if self.reference is None:
+            self.steps.append((None, None, False))
+            self.reference, self.ref_index = current, i
+            return
+        change, spread, split = steady_change_detail(self.reference, current)
+        if change is not None and spread > EVENT_SPREAD and self.bridging < MAX_BRIDGE:
+            self.bridging += 1
+            self.steps.append((change if split else None, self.ref_index, True))
+            return                                     # the anchor stays: the last calm frame
+        self.bridging = 0
+        self.steps.append((change, self.ref_index, False))
+        self.reference, self.ref_index = current, i
 
     def series(self, fallback: np.ndarray) -> np.ndarray:
         """Chain the changes; where two frames couldn't be compared, the
@@ -299,18 +310,36 @@ class SteadyChain:
         ``fallback``; NaN for frames that couldn't be measured at all."""
         fallback = np.asarray(fallback, dtype=np.float64)
         out = np.full(len(fallback), np.nan)
-        prev = None
-        for i, (step, usable) in enumerate(zip(self.steps, self.usable, strict=True)):
+        bridged = []
+        for i, (entry, usable) in enumerate(zip(self.steps, self.usable, strict=True)):
             if not usable:
                 continue
-            if prev is None:
-                out[i], prev = 0.0, i
+            step, start, event = entry
+            if start is None:                          # the first measurable frame
+                out[i] = 0.0
                 continue
-            if step is None:
-                step = fallback[i] - fallback[prev]
-                if not np.isfinite(step):
+            if event:
+                bridged.append(i)                      # checked against its calm neighbours below
+                if step is None:
                     continue
-            out[i], prev = out[prev] + step, i
+            if step is None:
+                step = fallback[i] - fallback[start]
+            if np.isfinite(step) and np.isfinite(out[start]):
+                out[i] = out[start] + step
+        calm = np.array([i for i in np.flatnonzero(np.isfinite(out)) if i not in set(bridged)], dtype=int)
+        for i in bridged:
+            before, after = calm[calm < i], calm[calm > i]
+            if before.size and after.size:
+                a, b = before[-1], after[0]
+                line = out[a] + (out[b] - out[a]) * (i - a) / (b - a)
+            elif before.size:
+                line = out[before[-1]]
+            else:
+                continue
+            # Kept only if it agrees with its calm neighbours (a beam across part of the frame, measured from
+            # the regions it missed); otherwise it was measured through the light: left as shot.
+            if not np.isfinite(out[i]) or abs(out[i] - line) > EVENT_TRUST:
+                out[i] = line
         both = np.isfinite(out) & np.isfinite(fallback)
         if both.any():
             out += fallback[both].mean() - out[both].mean()
